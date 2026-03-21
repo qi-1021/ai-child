@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.profile import ensure_name_question_exists, get_ai_name
 from ai.sleep import initialize_sleep_state, sleep_scheduler
+from ai.llm_provider import initialize_llm_provider
 from api.chat import router as chat_router
 from api.sleep import router as sleep_router
 from api.teach import router as teach_router
@@ -34,6 +35,8 @@ MEDIA_DIR.mkdir(exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Initialising LLM provider …")
+    initialize_llm_provider()
     logger.info("Initialising database …")
     await init_db()
     # Ensure the name-seeking question exists on every fresh start

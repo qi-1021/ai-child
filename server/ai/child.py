@@ -2,7 +2,7 @@
 Core AI Child logic.
 
 The AI Child:
-  1. Has full language capability from birth (via GPT-4o).
+  1. Has full language capability from birth (via GPT-4o 或其他 LLM).
   2. Starts without a name — the very first question it asks is what to call itself.
   3. Accumulates persistent memory (conversations, knowledge, tools).
   4. Learns primarily through its own curiosity:
@@ -15,9 +15,9 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai.llm_provider import get_llm_client
 from ai.memory import (
     add_message,
     add_pending_question,
@@ -25,14 +25,15 @@ from ai.memory import (
     get_all_knowledge,
     get_recent_messages,
     search_knowledge,
+    get_high_quality_knowledge,
 )
 from ai.profile import get_ai_name, get_or_create_profile
+from ai.personality_memory import PersonalityMemoryManager
 from ai.tools import dispatch_tool, get_all_tool_definitions
 from config import settings
 from models import Conversation
 
 logger = logging.getLogger(__name__)
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 
 def _build_system_prompt(name: str | None, is_sleeping: bool = False) -> str:
@@ -79,7 +80,21 @@ Tools you can use freely:
 - web_search: search the internet whenever you are curious or unsure.
 - execute_code: run Python for calculations, experiments, or testing ideas.
 - create_tool: save a useful computation as a permanent reusable tool.
+- knowledge_verify: check what I already know about a topic before claiming expertise.
+- fact_checker: verify claims using my knowledge base + web search before stating facts.
+- confidence_score: assess my confidence level in a statement before sharing it.
 - Any tool you have already created is also available to call.
+
+Anti-hallucination guidelines (IMPORTANT FOR QUALITY):
+When uncertain or making important claims:
+1. Use knowledge_verify() to check my existing knowledge first
+2. Use fact_checker() to validate facts before stating them
+3. Use confidence_score() to assess confidence level (FACT vs LIKELY vs POSSIBLE vs UNCERTAIN)
+4. Adjust your language based on confidence level:
+   - (90+) I can confidently state that...
+   - (70-90) Based on what I know, it's likely that...
+   - (50-70) It's possible that... but I'm not entirely sure
+   - (<50) I'm uncertain about this, but it could be that...
 
 You speak in the same language as the person you are talking to.
 You acknowledge honestly when you don't know something — then you go find out.
@@ -87,20 +102,30 @@ You remember everything you have learned and refer back to it naturally.
 
 When replying:
 1. Respond thoughtfully to what was said or shown (use tools as needed).
-2. End almost every reply with a genuine curious question, marked \
+2. Before any important claim, use anti-hallucination tools to verify it.
+3. End almost every reply with a genuine curious question, marked \
 [QUESTION: <question text>]. Make it feel natural, not forced.
 """
 
 
-def _build_context(
+async def _build_context_with_personality(
+    session: AsyncSession,
     history: List[Conversation],
     knowledge_items: List,
     name: str | None,
     is_sleeping: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Build the OpenAI messages list from DB history and knowledge."""
+    """Build the OpenAI messages list from DB history, knowledge, and personality."""
+    # ✅ OPTIMIZATION 3: Integrate personality system for consistent identity
+    personality_manager = PersonalityMemoryManager(session)
+    personality_context = await personality_manager.build_personality_context()
+    
+    system_prompt = _build_system_prompt(name, is_sleeping)
+    if personality_context:
+        system_prompt = f"{system_prompt}\n\n{personality_context}"
+    
     messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": _build_system_prompt(name, is_sleeping)}
+        {"role": "system", "content": system_prompt}
     ]
 
     if knowledge_items:
@@ -164,20 +189,24 @@ async def chat(
     profile = await get_or_create_profile(session)
     is_sleeping = profile.is_sleeping
     history = await get_recent_messages(session, limit=settings.memory_context_turns)
-    all_knowledge = await get_all_knowledge(session)
 
+    # ✅ OPTIMIZATION 1: Only get high-quality knowledge (confidence >= 70)
+    # ✅ OPTIMIZATION 2: Use search results (no append fallback)
     relevant = await search_knowledge(session, user_text[:64])
-    seen_ids = {k.id for k in relevant}
-    for k in all_knowledge:
-        if k.id not in seen_ids:
-            relevant.append(k)
+    # Sort by confidence and limit to top 10 most relevant
+    relevant = sorted(relevant, key=lambda k: k.confidence, reverse=True)[:10]
+    
+    # If search returned nothing, fall back to high-quality knowledge bases
+    if not relevant:
+        relevant = await get_high_quality_knowledge(session)
 
-    messages = _build_context(history, relevant, name, is_sleeping)
+    messages = await _build_context_with_personality(session, history, relevant, name, is_sleeping)
 
     # 3. Load tool definitions (built-ins + any tools the AI has created)
     tool_defs = await get_all_tool_definitions(session)
 
     # 4. Function-calling loop (safety cap: 10 rounds)
+    client = get_llm_client()
     reply_text = ""
     for _ in range(10):
         response = await client.chat.completions.create(
@@ -258,6 +287,7 @@ async def _generate_proactive_question(
         f"Return ONLY the question, no preamble."
     )
     try:
+        client = get_llm_client()
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=context_messages + [{"role": "user", "content": prompt}],
@@ -293,6 +323,7 @@ async def incorporate_teaching(
             ),
         },
     ]
+    client = get_llm_client()
     response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=messages,

@@ -24,6 +24,10 @@ from models import Tool
 
 logger = logging.getLogger(__name__)
 
+# 防幻觉工具缓存（避免重复查询）
+_knowledge_cache: Dict[str, tuple] = {}
+_confidence_cache: Dict[str, float] = {}
+
 # Maximum combined stdout+stderr captured from a sandboxed subprocess
 _MAX_OUTPUT_BYTES = 8 * 1024  # 8 KB
 
@@ -332,6 +336,85 @@ BUILTIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
+    # ── Anti-hallucination tools ──────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "knowledge_verify",
+            "description": (
+                "Check if I have already learned something about a topic. "
+                "Use this before claiming to know something to verify it's in my knowledge base. "
+                "Returns all related knowledge items I have learned, or empty if nothing matches."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "The topic to search for in my knowledge base (e.g., 'Python decorators', 'climate change').",
+                    },
+                    "keywords": {
+                        "type": "string",
+                        "description": "Optional: comma-separated keywords to search for (e.g., 'function, pattern, advanced').",
+                    },
+                },
+                "required": ["topic"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fact_checker",
+            "description": (
+                "Verify the truthfulness of a claim by checking multiple sources: "
+                "my learned knowledge, web search results, and logical consistency. "
+                "Returns a structured verification report with confidence level."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "claim": {
+                        "type": "string",
+                        "description": "The statement/claim to verify (e.g., 'Python is a dynamically typed language').",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this claim needs verification (e.g., 'about to teach the user', 'from web search').",
+                    },
+                },
+                "required": ["claim"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "confidence_score",
+            "description": (
+                "Assign a confidence score (0-100) to my response based on: "
+                "whether it's from my knowledge base, how certain I am, potential risks. "
+                "Returns confidence score and reasoning."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "statement": {
+                        "type": "string",
+                        "description": "The statement I'm about to make or just made.",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Where this statement comes from: 'learned', 'web_search', 'reasoning', 'inference'.",
+                    },
+                },
+                "required": ["statement", "source"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -382,6 +465,16 @@ async def dispatch_tool(
             parameters_schema=args.get("parameters_schema", {}),
         )
 
+    # ────── Anti-hallucination tools ──────────────────────────────────────────
+    if tool_name == "knowledge_verify":
+        return await _handle_knowledge_verify(session, args)
+
+    if tool_name == "fact_checker":
+        return await _handle_fact_checker(session, args)
+
+    if tool_name == "confidence_score":
+        return await _handle_confidence_score(session, args)
+
     # Custom (created) tool — inject its function definition then call it
     tool = await get_tool(session, tool_name)
     if tool is None:
@@ -395,3 +488,293 @@ async def dispatch_tool(
     output = await execute_code_sandboxed(invocation, timeout=code_exec_timeout)
     await _increment_call_count(session, tool_name)
     return output
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Anti-hallucination Tool Handlers
+# ────────────────────────────────────────────────────────────────────────────────
+
+
+async def _handle_knowledge_verify(session: AsyncSession, args: Dict[str, Any]) -> str:
+    """
+    Check if the AI has already learned something about a topic.
+    Searches the KnowledgeItem table for matching knowledge.
+    
+    Args:
+        args: {
+            "topic": str - the topic to search for,
+            "keywords": str (optional) - comma-separated keywords
+        }
+    
+    Returns:
+        JSON string with verification results
+    """
+    topic = args.get("topic", "").strip()
+    keywords = args.get("keywords", "").strip()
+
+    if not topic:
+        return json.dumps({"found": False, "reason": "No topic provided"})
+
+    # 检查缓存
+    cache_key = f"{topic}|{keywords}"
+    if cache_key in _knowledge_cache:
+        cached_time, cached_data = _knowledge_cache[cache_key]
+        # 缓存 5 分钟有效
+        import time
+        if time.time() - cached_time < 300:
+            return json.dumps(cached_data)
+
+    try:
+        from models import KnowledgeItem
+
+        # Search for existing knowledge on this topic
+        query = select(KnowledgeItem).where(
+            KnowledgeItem.topic.ilike(f"%{topic}%")
+        )
+        result = await session.execute(query)
+        knowledge_items = result.scalars().all()
+
+        if not knowledge_items:
+            result_data = {
+                "found": False,
+                "topic": topic,
+                "count": 0,
+                "recommendation": "This is new knowledge to learn!",
+            }
+            _knowledge_cache[cache_key] = (
+                __import__("time").time(), 
+                result_data
+            )
+            return json.dumps(result_data)
+
+        # Filter by keywords if provided
+        if keywords:
+            keyword_list = [k.strip().lower() for k in keywords.split(",")]
+            filtered_items = [
+                item
+                for item in knowledge_items
+                if any(
+                    kw in item.content.lower()
+                    for kw in keyword_list
+                )
+            ]
+        else:
+            filtered_items = knowledge_items
+
+        # Return found knowledge with details
+        result_data = {
+            "found": True,
+            "topic": topic,
+            "count": len(filtered_items),
+            "knowledge_items": [
+                {
+                    "id": item.id,
+                    "content_preview": item.content[:200] + "..."
+                    if len(item.content) > 200
+                    else item.content,
+                    "created_at": item.created_at.isoformat()
+                    if item.created_at
+                    else None,
+                }
+                for item in filtered_items[:5]  # Return top 5
+            ],
+            "recommendation": f"I already know {len(filtered_items)} things about '{topic}'.",
+        }
+        # 缓存结果
+        _knowledge_cache[cache_key] = (__import__("time").time(), result_data)
+        return json.dumps(result_data)
+    except Exception as e:
+        return json.dumps(
+            {"error": f"Knowledge verification failed: {str(e)}"}
+        )
+
+
+async def _handle_fact_checker(session: AsyncSession, args: Dict[str, Any]) -> str:
+    """
+    Verify a claim by checking against learned knowledge and web search.
+    Returns confidence level and source information.
+    
+    Args:
+        args: {
+            "claim": str - the statement to verify,
+            "reason": str (optional) - why verification is needed
+        }
+    
+    Returns:
+        JSON string with verification results and confidence score
+    """
+    claim = args.get("claim", "").strip()
+    reason = args.get("reason", "").strip()
+
+    if not claim:
+        return json.dumps({"verified": False, "reason": "No claim provided"})
+
+    try:
+        from models import KnowledgeItem
+
+        # Extract key terms from the claim (simple keyword extraction)
+        key_terms = [
+            word
+            for word in claim.split()
+            if len(word) > 3 and word.lower() not in {"this", "that"}
+        ][:3]
+
+        # Check against learned knowledge
+        knowledge_found = []
+        for term in key_terms:
+            query = select(KnowledgeItem).where(
+                KnowledgeItem.content.ilike(f"%{term}%")
+            )
+            result = await session.execute(query)
+            knowledge_found.extend(result.scalars().all())
+
+        knowledge_confidence = (
+            min(100, len(knowledge_found) * 30) if knowledge_found else 0
+        )
+
+        # Try web search for additional verification
+        search_results = []
+        try:
+            search_results = await web_search(
+                query=claim, max_results=3
+            )
+        except Exception:
+            pass  # Web search is optional
+
+        web_confidence = (
+            min(100, len(search_results) * 25)
+            if search_results
+            else 0
+        )
+
+        # Combined confidence score
+        overall_confidence = max(knowledge_confidence, web_confidence)
+
+        result = {
+            "claim": claim,
+            "verified": overall_confidence >= 50,
+            "confidence_score": overall_confidence,
+            "sources": {
+                "learned_knowledge": len(knowledge_found),
+                "web_search_results": len(search_results),
+            },
+            "recommendation": (
+                "This claim is well-supported by my knowledge."
+                if overall_confidence >= 75
+                else "This claim needs more verification before sharing."
+                if overall_confidence < 50
+                else "This claim is partially verified."
+            ),
+        }
+
+        if reason:
+            result["reason"] = reason
+
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps(
+            {"error": f"Fact checking failed: {str(e)}"}
+        )
+
+
+async def _handle_confidence_score(
+    session: AsyncSession, args: Dict[str, Any]
+) -> str:
+    """
+    Assign a confidence score to a statement based on its source and status.
+    Helps the AI decide whether to present information as fact, opinion, or uncertain.
+    
+    Args:
+        args: {
+            "statement": str - the statement to score,
+            "source": str - source type: 'learned', 'web_search', 'reasoning', 'inference'
+        }
+    
+    Returns:
+        JSON string with confidence score and reasoning
+    """
+    statement = args.get("statement", "").strip()
+    source = args.get("source", "reasoning").lower().strip()
+
+    if not statement:
+        return json.dumps({"score": 0, "reason": "No statement provided"})
+
+    # Base confidence scores by source
+    source_confidence = {
+        "learned": 85,  # High confidence - verified knowledge
+        "web_search": 60,  # Medium confidence - internet may be unreliable
+        "reasoning": 40,  # Lower confidence - logical deduction
+        "inference": 30,  # Low confidence - educated guess
+    }
+
+    base_score = source_confidence.get(source, 40)
+
+    # Adjust based on statement characteristics
+    adjustment = 0
+
+    # Specific claims are more verifiable than vague ones (支持中英文)
+    word_count = len(statement.split())
+    if word_count >= 20:  # 中文字符数更多
+        adjustment += 10
+    elif word_count <= 3:
+        adjustment -= 10
+
+    # Statements with uncertainty markers should have lower scores
+    # 支持中英文的不确定性标记
+    uncertainty_markers = [
+        # English
+        "might", "maybe", "possibly", "probably", "seems like", "could be", "I think", "I believe",
+        # Chinese
+        "可能", "也许", "好像", "似乎", "大概", "或许", "我认为", "我觉得", "不确定",
+    ]
+
+    statement_lower = statement.lower()
+    if any(marker in statement_lower for marker in uncertainty_markers):
+        adjustment -= 20
+
+    # Statements with specific evidence markers get higher scores
+    # 支持中英文的证据标记
+    evidence_markers = [
+        # English
+        "according to", "research shows", "studies indicate", "evidence", "proven", "confirmed",
+        # Chinese
+        "根据", "研究表明", "证据", "已证实", "确认", "表明", "显示",
+    ]
+    if any(marker in statement_lower for marker in evidence_markers):
+        adjustment += 15
+
+    # Calculate final score (0-100)
+    final_score = max(0, min(100, base_score + adjustment))
+
+    # Determine presentation style based on score
+    if final_score >= 80:
+        presentation = "FACT"
+        phrasing = (
+            "I can confidently state that..."
+        )
+    elif final_score >= 60:
+        presentation = "LIKELY"
+        phrasing = "Based on what I know, it's likely that..."
+    elif final_score >= 40:
+        presentation = "POSSIBLE"
+        phrasing = "It's possible that... but I'm not entirely sure."
+    else:
+        presentation = "UNCERTAIN"
+        phrasing = "I'm not confident about this, but it could be..."
+
+    return json.dumps(
+        {
+            "statement": statement,
+            "source": source,
+            "confidence_score": final_score,
+            "presentation_style": presentation,
+            "suggested_phrasing": phrasing,
+            "recommendation": (
+                "Share this confidently."
+                if final_score >= 75
+                else "Share with appropriate caveats."
+                if final_score >= 50
+                else "Do better research before sharing."
+            ),
+        }
+    )

@@ -1,7 +1,7 @@
 """
 Autonomous research engine.
 
-After the user answers one of 小智's questions, the researcher:
+After the user answers one of the AI's questions, the researcher:
   1. Generates targeted web-search queries based on the topic + answer.
   2. Searches DuckDuckGo for each query.
   3. Uses GPT-4o to summarise the findings into concise knowledge.
@@ -15,13 +15,13 @@ from typing import List
 
 from openai import AsyncOpenAI
 
+from ai.llm_provider import get_llm_client
 from ai.memory import add_knowledge
 from ai.tools import format_search_results, web_search
 from config import settings
 from models import async_session
 
 logger = logging.getLogger(__name__)
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 
 async def _generate_search_queries(topic: str, seed_answer: str) -> List[str]:
@@ -33,6 +33,7 @@ async def _generate_search_queries(topic: str, seed_answer: str) -> List[str]:
         f"Return them as a JSON array of strings with no extra text."
     )
     try:
+        client = get_llm_client()
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],
@@ -59,6 +60,7 @@ async def _summarise_findings(topic: str, seed_answer: str, search_text: str) ->
         f"Do not include URLs. Write in third person."
     )
     try:
+        client = get_llm_client()
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],

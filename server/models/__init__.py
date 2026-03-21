@@ -100,6 +100,10 @@ class AIProfile(Base):
     # Sleep state
     is_sleeping = Column(Boolean, default=False)
     last_consolidation_summary = Column(Text, nullable=True)
+    # Localization
+    preferred_language = Column(String(16), default="en-US")  # "en-US" | "zh-CN"
+    # Personality traits (structured data)
+    personality_traits = Column(JSON, default=dict)  # {"interests": [], "values": [], "quirks": []}
 
 
 class SleepEvent(Base):
@@ -116,6 +120,39 @@ class SleepEvent(Base):
     message = Column(Text, nullable=True)              # personalised GPT message
     consumed = Column(Boolean, default=False)          # True once bot has delivered it
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class PersonalityMemory(Base):
+    """
+    Explicit personality-shaping memories that define the AI child's character.
+    
+    These are NOT subject to automatic deletion. They're foundational to the AI's identity.
+    Separate from regular memories for intentional curation and easy backup/export.
+    
+    Example categories:
+    - personality_traits: What makes this AI unique
+    - values: What the AI cares about (e.g., curiosity, kindness)
+    - origin_story: How the AI came to be
+    - important_relationships: Key connections with users
+    - core_beliefs: Philosophical stance (neutral as assistant, but has personal views)
+    """
+
+    __tablename__ = "personality_memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(String(64), nullable=False, index=True)  # "traits" | "values" | "origin" | "relationships" | "beliefs"
+    content = Column(Text, nullable=False)                      # The memory itself
+    significance = Column(Integer, default=100)                 # 1-100, higher = more fundamental
+    source = Column(String(32), default="user")                 # "user" | "self" | "system" | "web"
+    source_authority = Column(Integer, default=100)             # Source weight: user=100, verified_web=70, web=40, inference=50
+    is_neutral_fact = Column(Boolean, default=False)            # True = neutral assistant info, False = personality stance
+    is_stance_relevant = Column(Boolean, default=True)          # False = web data won't influence AI's stance/personality
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    last_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)  # When the memory was verified/reviewed
+    # Metadata for better organization
+    tags = Column(JSON, default=list)  # ["important", "core", "verified", "web:caution"]
+    context = Column(Text, nullable=True)  # Additional context or explanation
 
 
 async def init_db():

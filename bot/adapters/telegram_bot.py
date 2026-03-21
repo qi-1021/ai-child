@@ -67,7 +67,7 @@ class TelegramAdapter(BaseAdapter):
     async def send_question(self, chat_id: str, question: str) -> None:
         await self._app.bot.send_message(
             chat_id=int(chat_id),
-            text=f"🤔 小智想问你：\n{question}",
+            text=f"🤔 我想问你：\n{question}",
         )
 
     async def start(self) -> None:
@@ -107,7 +107,7 @@ class TelegramAdapter(BaseAdapter):
     ) -> None:
         self._register_chat(update)
         await update.message.reply_text(
-            "你好！我是小智 👋\n\n"
+            "你好！👋\n\n"
             "我是一个会持续学习的 AI，你可以：\n"
             "• 直接发消息和我聊天（支持文字、图片、语音）\n"
             "• /teach <主题> | <内容> — 教我新知识\n"
@@ -115,7 +115,8 @@ class TelegramAdapter(BaseAdapter):
             "• /answer <编号> <回答> — 回答我的问题（我会自动上网查阅更多资料）\n"
             "• /knowledge — 查看我已学到的所有知识\n"
             "• /tools — 查看我自己制作的工具\n\n"
-            "我会主动提问，并在收到答案后自主上网学习！😊"
+            "我会主动提问，并在收到答案后自主上网学习！😊\n"
+            "\n*(你还没有给我命名。如果想改名字，可以随时告诉我！)*"
         )
 
     async def _cmd_teach(
@@ -216,7 +217,7 @@ class TelegramAdapter(BaseAdapter):
             reply, question = await srv.send_text(update.message.text or "")
         await update.message.reply_text(reply)
         if question:
-            await update.message.reply_text(f"🤔 小智想问你：\n{question}")
+            await update.message.reply_text(f"🤔 我想问你：\n{question}")
 
     async def _on_photo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -234,7 +235,7 @@ class TelegramAdapter(BaseAdapter):
             )
         await update.message.reply_text(reply)
         if question:
-            await update.message.reply_text(f"🤔 小智想问你：\n{question}")
+            await update.message.reply_text(f"🤔 我想问你：\n{question}")
 
     async def _on_audio(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -249,7 +250,7 @@ class TelegramAdapter(BaseAdapter):
             reply, question = await srv.send_audio(bytes(audio_bytes), filename=filename)
         await update.message.reply_text(reply)
         if question:
-            await update.message.reply_text(f"🤔 小智想问你：\n{question}")
+            await update.message.reply_text(f"🤔 我想问你：\n{question}")
 
     # ── Proactive question poller ──────────────────────────────────────────
 

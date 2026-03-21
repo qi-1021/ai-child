@@ -13,10 +13,10 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
+from ai.llm_provider import get_llm_client
 from config import settings
 
 logger = logging.getLogger(__name__)
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 MEDIA_DIR = Path("media")
 MEDIA_DIR.mkdir(exist_ok=True)
@@ -30,9 +30,10 @@ def save_media(data: bytes, filename: str) -> str:
 
 
 async def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> str:
-    """Transcribe raw audio bytes to text using OpenAI Whisper."""
+    """Transcribe raw audio bytes to text using Whisper."""
     audio_file = io.BytesIO(audio_bytes)
     audio_file.name = filename
+    client = get_llm_client()
     transcript = await client.audio.transcriptions.create(
         model=settings.openai_whisper_model,
         file=audio_file,
@@ -41,8 +42,9 @@ async def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> s
 
 
 async def describe_image(image_bytes: bytes) -> str:
-    """Return a textual description of an image using GPT-4o vision."""
+    """Return a textual description of an image using model vision."""
     b64 = base64.b64encode(image_bytes).decode("utf-8")
+    client = get_llm_client()
     response = await client.chat.completions.create(
         model=settings.openai_vision_model,
         messages=[
@@ -72,7 +74,8 @@ async def describe_image(image_bytes: bytes) -> str:
 
 
 async def text_to_speech(text: str) -> bytes:
-    """Convert text to audio bytes using OpenAI TTS."""
+    """Convert text to audio bytes using TTS."""
+    client = get_llm_client()
     response = await client.audio.speech.create(
         model=settings.openai_tts_model,
         voice=settings.openai_tts_voice,

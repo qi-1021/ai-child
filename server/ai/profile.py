@@ -14,11 +14,11 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai.llm_provider import get_llm_client
 from config import settings
 from models import AIProfile, PendingQuestion
 
 logger = logging.getLogger(__name__)
-_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 # Sentinel topic value that marks the "what is my name?" question
 NAME_QUESTION_TOPIC = "__name__"
@@ -76,7 +76,8 @@ async def extract_name_from_answer(answer: str) -> str:
         f"no punctuation around it. If the reply is already just a name, return it as-is."
     )
     try:
-        response = await _client.chat.completions.create(
+        client = get_llm_client()
+        response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=32,

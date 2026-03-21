@@ -39,13 +39,13 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai.llm_provider import get_llm_client
 from ai.memory import add_knowledge, add_pending_question
 from ai.profile import get_ai_name, get_or_create_profile
 from config import settings
 from models import AIProfile, KnowledgeItem, SleepEvent, async_session
 
 logger = logging.getLogger(__name__)
-_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -101,7 +101,8 @@ async def _generate_sleep_message(session: AsyncSession, name: str | None) -> st
             f"用中文，加睡觉相关的emoji。"
         )
     try:
-        resp = await _client.chat.completions.create(
+        client = get_llm_client()
+        resp = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=128,
@@ -126,7 +127,8 @@ async def _generate_wake_message(
         f"提到睡得很好，感觉头脑清晰，迫不及待想继续学习。用中文，加早晨相关的emoji。"
     )
     try:
-        resp = await _client.chat.completions.create(
+        client = get_llm_client()
+        resp = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=128,
@@ -176,7 +178,8 @@ async def consolidate_memories() -> str:
                 f"2. 找出2个你仍然好奇或不确定的问题\n"
                 f'{{"insights": ["...", "...", "..."], "questions": ["...", "..."]}}'
             )
-            resp = await _client.chat.completions.create(
+            client = get_llm_client()
+            resp = await client.chat.completions.create(
                 model=settings.openai_model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=512,

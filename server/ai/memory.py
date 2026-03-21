@@ -80,11 +80,25 @@ async def get_all_knowledge(session: AsyncSession) -> List[KnowledgeItem]:
 async def search_knowledge(
     session: AsyncSession, query: str
 ) -> List[KnowledgeItem]:
+    """Search for knowledge with relevance filtering."""
     result = await session.execute(
         select(KnowledgeItem).where(
             KnowledgeItem.topic.ilike(f"%{query}%")
             | KnowledgeItem.content.ilike(f"%{query}%")
         )
+    )
+    return result.scalars().all()
+
+
+async def get_high_quality_knowledge(
+    session: AsyncSession, min_confidence: int = 70, limit: int = 10
+) -> List[KnowledgeItem]:
+    """✅ OPTIMIZATION: Get only high-quality knowledge (confidence >= min_confidence)."""
+    result = await session.execute(
+        select(KnowledgeItem)
+        .where(KnowledgeItem.confidence >= min_confidence)
+        .order_by(KnowledgeItem.confidence.desc())
+        .limit(limit)
     )
     return result.scalars().all()
 

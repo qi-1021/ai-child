@@ -123,18 +123,16 @@ async def test_ensure_name_question_skipped_when_already_named(session):
 @pytest.mark.asyncio
 async def test_extract_name_from_answer_via_gpt():
     """GPT extraction returns the parsed name."""
-    from ai import profile as profile_module
-
     mock_choice = MagicMock()
     mock_choice.message.content = "小智"
     mock_resp = MagicMock()
     mock_resp.choices = [mock_choice]
 
-    with patch.object(
-        profile_module._client.chat.completions,
-        "create",
-        new=AsyncMock(return_value=mock_resp),
-    ):
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+    with patch("ai.profile.get_llm_client", return_value=mock_llm):
+        from ai import profile as profile_module
         name = await profile_module.extract_name_from_answer("你就叫小智吧")
     assert name == "小智"
 
@@ -142,13 +140,11 @@ async def test_extract_name_from_answer_via_gpt():
 @pytest.mark.asyncio
 async def test_extract_name_falls_back_on_gpt_error():
     """When GPT fails, the raw answer (trimmed) is used as the name."""
-    from ai import profile as profile_module
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock(side_effect=Exception("API unavailable"))
 
-    with patch.object(
-        profile_module._client.chat.completions,
-        "create",
-        new=AsyncMock(side_effect=Exception("API unavailable")),
-    ):
+    with patch("ai.profile.get_llm_client", return_value=mock_llm):
+        from ai import profile as profile_module
         name = await profile_module.extract_name_from_answer("Alex")
     assert name == "Alex"
 

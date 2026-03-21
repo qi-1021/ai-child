@@ -90,8 +90,9 @@ async def test_send_text_message(client):
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
 
-    with patch("ai.child.client") as mock_client:
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock(return_value=mock_response)
+    with patch("ai.child.get_llm_client", return_value=mock_llm):
         response = await client.post(
             "/chat/text", data={"text": "Hello, who are you?"}
         )
@@ -113,8 +114,9 @@ async def test_send_text_with_embedded_question(client):
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
 
-    with patch("ai.child.client") as mock_client:
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock(return_value=mock_response)
+    with patch("ai.child.get_llm_client", return_value=mock_llm):
         response = await client.post(
             "/chat/text", data={"text": "I love painting."}
         )
@@ -134,8 +136,9 @@ async def test_teach_knowledge(client):
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
 
-    with patch("ai.child.client") as mock_client:
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock(return_value=mock_response)
+    with patch("ai.child.get_llm_client", return_value=mock_llm):
         response = await client.post(
             "/teach/",
             json={"topic": "gravity", "content": "Objects fall at 9.8 m/s² on Earth."},

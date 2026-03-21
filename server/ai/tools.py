@@ -572,8 +572,8 @@ async def _handle_knowledge_verify(session: AsyncSession, args: Dict[str, Any]) 
                     "content_preview": item.content[:200] + "..."
                     if len(item.content) > 200
                     else item.content,
-                    "created_at": item.created_at.isoformat()
-                    if item.created_at
+                    "created_at": item.timestamp.isoformat()
+                    if item.timestamp
                     else None,
                 }
                 for item in filtered_items[:5]  # Return top 5

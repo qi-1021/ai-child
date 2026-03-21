@@ -287,10 +287,12 @@ async def test_research_topic_stores_knowledge():
     mock_summary_resp = MagicMock()
     mock_summary_resp.choices = [mock_summary_choice]
 
+    mock_llm = MagicMock()
+    mock_llm.chat.completions.create = AsyncMock(
+        side_effect=[mock_queries_resp, mock_summary_resp]
+    )
     with (
-        patch.object(res_module.client.chat.completions, "create", new=AsyncMock(
-            side_effect=[mock_queries_resp, mock_summary_resp]
-        )),
+        patch("ai.researcher.get_llm_client", return_value=mock_llm),
         patch("ai.researcher.web_search", new=AsyncMock(return_value=fake_results)),
         patch("ai.researcher.settings") as mock_settings,
         patch("ai.researcher.async_session") as mock_session_factory,

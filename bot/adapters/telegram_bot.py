@@ -95,6 +95,7 @@ class TelegramAdapter(BaseAdapter):
         add(CommandHandler("questions", self._cmd_questions))
         add(CommandHandler("answer", self._cmd_answer))
         add(CommandHandler("knowledge", self._cmd_knowledge))
+        add(CommandHandler("tools", self._cmd_tools))
         add(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
         add(MessageHandler(filters.PHOTO, self._on_photo))
         add(MessageHandler(filters.VOICE | filters.AUDIO, self._on_audio))
@@ -111,9 +112,10 @@ class TelegramAdapter(BaseAdapter):
             "• 直接发消息和我聊天（支持文字、图片、语音）\n"
             "• /teach <主题> | <内容> — 教我新知识\n"
             "• /questions — 查看我想问你的问题\n"
-            "• /answer <编号> <回答> — 回答我的问题\n"
-            "• /knowledge — 查看我已学到的所有知识\n\n"
-            "我会主动提问，帮助自己更好地认识世界！😊"
+            "• /answer <编号> <回答> — 回答我的问题（我会自动上网查阅更多资料）\n"
+            "• /knowledge — 查看我已学到的所有知识\n"
+            "• /tools — 查看我自己制作的工具\n\n"
+            "我会主动提问，并在收到答案后自主上网学习！😊"
         )
 
     async def _cmd_teach(
@@ -186,6 +188,22 @@ class TelegramAdapter(BaseAdapter):
         lines = [f"• [{i['topic']}] {i['content'][:80]}" for i in items[:20]]
         suffix = f"\n…共 {len(items)} 条" if len(items) > 20 else ""
         await update.message.reply_text("📚 我已学到的知识：\n\n" + "\n".join(lines) + suffix)
+
+    async def _cmd_tools(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        self._register_chat(update)
+        async with ServerClient() as srv:
+            tools = await srv.get_tools()
+        if not tools:
+            await update.message.reply_text("我还没有创建任何工具～和我聊天时我会按需制作！🔧")
+            return
+        lines = [
+            f"🔧 {t['name']} (调用 {t['call_count']} 次)\n   {t['description']}"
+            for t in tools[:15]
+        ]
+        suffix = f"\n…共 {len(tools)} 个" if len(tools) > 15 else ""
+        await update.message.reply_text("🛠️ 我制作的工具：\n\n" + "\n\n".join(lines) + suffix)
 
     # ── Message handlers ───────────────────────────────────────────────────
 

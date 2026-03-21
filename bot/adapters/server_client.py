@@ -92,3 +92,9 @@ class ServerClient:
         r = await self._http.get("/teach/knowledge")
         r.raise_for_status()
         return r.json()
+
+    async def get_tools(self) -> list:
+        """GET /teach/tools → list of tool dicts."""
+        r = await self._http.get("/teach/tools")
+        r.raise_for_status()
+        return r.json()

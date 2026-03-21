@@ -1,9 +1,10 @@
 """
 Teaching and knowledge management endpoints.
 """
+import asyncio
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.child import incorporate_teaching
@@ -13,8 +14,10 @@ from ai.memory import (
     get_all_knowledge,
     get_unanswered_questions,
 )
+from ai.researcher import research_topic
+from ai.tools import get_all_tools, get_tool
 from models import get_session
-from models.schemas import AnswerIn, KnowledgeOut, QuestionOut, TeachIn
+from models.schemas import AnswerIn, KnowledgeOut, QuestionOut, TeachIn, ToolOut
 
 router = APIRouter(prefix="/teach", tags=["teach"])
 
@@ -35,7 +38,7 @@ async def teach(
 
 @router.get("/knowledge", response_model=List[KnowledgeOut])
 async def list_knowledge(session: AsyncSession = Depends(get_session)):
-    """Return all knowledge items the AI child has been taught."""
+    """Return all knowledge items the AI child has been taught or researched."""
     items = await get_all_knowledge(session)
     return [
         KnowledgeOut(
@@ -70,25 +73,67 @@ async def list_questions(session: AsyncSession = Depends(get_session)):
 async def answer(
     question_id: int,
     body: AnswerIn,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ):
-    """Answer a question the AI child has asked."""
+    """
+    Answer a question the AI child has asked.
+
+    After storing the answer, an autonomous research task is launched in the
+    background: 小智 searches the web to deepen its understanding of the topic
+    and stores the findings as self-sourced knowledge.
+    """
     q = await answer_question(session, question_id, body.answer)
     if q is None:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    # Store the answer as knowledge
-    await add_knowledge(
-        session,
-        topic=q.topic or q.question[:64],
-        content=body.answer,
-        source="user",
-    )
+    topic = q.topic or q.question[:64]
+
+    # Store the answer as user-sourced knowledge
+    await add_knowledge(session, topic=topic, content=body.answer, source="user")
 
     # Acknowledge via conversation
-    reply = await incorporate_teaching(
-        session,
-        topic=q.topic or q.question[:64],
-        content=body.answer,
-    )
+    reply = await incorporate_teaching(session, topic=topic, content=body.answer)
+
+    # Launch autonomous web research in the background (non-blocking)
+    background_tasks.add_task(research_topic, topic, body.answer)
+
     return {"reply": reply}
+
+
+# ── Tool endpoints ─────────────────────────────────────────────────────────────
+
+@router.get("/tools", response_model=List[ToolOut])
+async def list_tools(session: AsyncSession = Depends(get_session)):
+    """Return all reusable tools the AI child has created."""
+    tools = await get_all_tools(session)
+    return [
+        ToolOut(
+            id=t.id,
+            name=t.name,
+            description=t.description,
+            code=t.code,
+            parameters_schema=t.parameters_schema,
+            call_count=t.call_count,
+            created_at=t.created_at,
+        )
+        for t in tools
+    ]
+
+
+@router.get("/tools/{name}", response_model=ToolOut)
+async def get_tool_by_name(name: str, session: AsyncSession = Depends(get_session)):
+    """Return details of a specific tool by name."""
+    tool = await get_tool(session, name)
+    if tool is None:
+        raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+    return ToolOut(
+        id=tool.id,
+        name=tool.name,
+        description=tool.description,
+        code=tool.code,
+        parameters_schema=tool.parameters_schema,
+        call_count=tool.call_count,
+        created_at=tool.created_at,
+    )
+

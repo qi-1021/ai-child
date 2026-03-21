@@ -4,11 +4,16 @@ Core AI Child logic.
 The AI Child:
   1. Has pre-existing language capabilities (via GPT-4o).
   2. Accumulates a persistent memory of conversations and explicit knowledge.
-  3. Generates a thoughtful reply to each user message.
+  3. Generates a thoughtful reply to each user message, using tools when helpful:
+       - web_search  → look things up in real time
+       - execute_code → run calculations in a sandbox
+       - create_tool  → define reusable Python functions stored in its long-term memory
+       - <created tools> → call any tool it has previously invented
   4. Periodically asks the user a proactive question based on gaps in its knowledge.
 """
+import json
 import logging
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,8 +26,9 @@ from ai.memory import (
     get_recent_messages,
     search_knowledge,
 )
+from ai.tools import dispatch_tool, get_all_tool_definitions
 from config import settings
-from models import Conversation, PendingQuestion
+from models import Conversation
 
 logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -39,20 +45,26 @@ Key personality traits:
 - You celebrate learning new things with childlike enthusiasm.
 - You speak in the same language as the user.
 
-When you reply, you may:
-1. Answer or respond to the user's message.
-2. If you have a genuine knowledge gap relevant to the conversation, end your \
-reply with ONE curious question (mark it with the tag [QUESTION: <question text>]).
-   Only include a question if it is genuinely relevant – do not force it every turn.
+You have access to tools:
+- web_search: use it whenever you want to verify or deepen your knowledge.
+- execute_code: use it for calculations or to prototype logic.
+- create_tool: use it to save a useful function for future conversations.
+- Any tool you have previously created is also available.
+
+When you reply to the user, you may:
+1. Answer or respond to their message (using tools as needed).
+2. If you have a genuine knowledge gap, end your reply with ONE curious question \
+(mark it with the tag [QUESTION: <question text>]). Only include a question if it \
+is genuinely relevant – do not force it every turn.
 """
 
 
 def _build_context(
     history: List[Conversation],
     knowledge_items: List,
-) -> List[dict]:
+) -> List[Dict[str, Any]]:
     """Build the OpenAI messages list from DB history and knowledge."""
-    messages: List[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     if knowledge_items:
         kb_text = "\n".join(
@@ -61,7 +73,7 @@ def _build_context(
         messages.append(
             {
                 "role": "system",
-                "content": f"Knowledge you have been taught:\n{kb_text}",
+                "content": f"Knowledge you have been taught or researched:\n{kb_text}",
             }
         )
 
@@ -69,6 +81,24 @@ def _build_context(
         messages.append({"role": msg.role, "content": msg.content})
 
     return messages
+
+
+def _assistant_message_dict(message: Any) -> Dict[str, Any]:
+    """Convert an OpenAI ChatCompletionMessage to a plain dict for re-submission."""
+    d: Dict[str, Any] = {"role": "assistant", "content": message.content}
+    if message.tool_calls:
+        d["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in message.tool_calls
+        ]
+    return d
 
 
 async def chat(
@@ -80,8 +110,13 @@ async def chat(
     """
     Process a user message and return (reply_text, proactive_question | None).
 
-    The proactive question is extracted from the reply if the model decided to
-    ask one, or generated independently when the turn counter triggers it.
+    Uses OpenAI function calling so the AI can:
+      - search the web
+      - execute sandboxed code
+      - create and call its own tools
+
+    The proactive question (if any) is extracted from the reply or generated
+    independently when the turn counter triggers it.
     """
     # 1. Persist the user message
     await add_message(
@@ -92,55 +127,84 @@ async def chat(
         media_path=media_path,
     )
 
-    # 2. Build context
+    # 2. Build context (history already includes the user message we just added)
     history = await get_recent_messages(session, limit=settings.memory_context_turns)
     all_knowledge = await get_all_knowledge(session)
 
-    # Retrieve knowledge relevant to this message too
     relevant = await search_knowledge(session, user_text[:64])
-    # Merge without duplicates (relevant first)
-    knowledge_ids = {k.id for k in relevant}
+    seen_ids = {k.id for k in relevant}
     for k in all_knowledge:
-        if k.id not in knowledge_ids:
+        if k.id not in seen_ids:
             relevant.append(k)
 
     messages = _build_context(history, relevant)
 
-    # 3. Call LLM
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=messages,
-        max_tokens=1024,
-        temperature=0.7,
-    )
-    reply_text: str = response.choices[0].message.content or ""
+    # 3. Load tool definitions (built-ins + any tools the AI has created)
+    tool_defs = await get_all_tool_definitions(session)
 
-    # 4. Extract embedded proactive question (if any)
+    # 4. Function-calling loop
+    reply_text = ""
+    for _ in range(10):  # safety cap: at most 10 tool rounds per reply
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=messages,
+            tools=tool_defs,
+            tool_choice="auto",
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        choice = response.choices[0]
+
+        if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
+            # Append the assistant's decision to call tool(s)
+            messages.append(_assistant_message_dict(choice.message))
+
+            # Execute every requested tool call and feed results back
+            for tc in choice.message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+                result = await dispatch_tool(
+                    session,
+                    tc.function.name,
+                    args,
+                    code_exec_timeout=settings.code_exec_timeout,
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+
+            # If the AI just created a tool, reload definitions so it can
+            # immediately call the new tool in the same turn.
+            if any(tc.function.name == "create_tool" for tc in choice.message.tool_calls):
+                tool_defs = await get_all_tool_definitions(session)
+
+        else:
+            # Model is done; extract the final text reply
+            reply_text = choice.message.content or ""
+            break
+
+    # 5. Extract embedded proactive question (if any)
     proactive_question: Optional[str] = None
     if "[QUESTION:" in reply_text:
         start = reply_text.index("[QUESTION:") + len("[QUESTION:")
         end = reply_text.index("]", start)
         proactive_question = reply_text[start:end].strip()
-        # Remove the tag from the visible reply
         reply_text = reply_text[: reply_text.index("[QUESTION:")].strip()
 
-    # 5. Check if we should generate a proactive question independently
+    # 6. Independently generate a proactive question on schedule
     if proactive_question is None:
         turn_count = await count_messages(session)
         if turn_count % settings.proactive_question_interval == 0:
-            proactive_question = await _generate_proactive_question(
-                messages, relevant
-            )
+            proactive_question = await _generate_proactive_question(messages, relevant)
 
-    # 6. Persist the assistant reply
-    await add_message(
-        session,
-        role="assistant",
-        content=reply_text,
-        content_type="text",
-    )
+    # 7. Persist the assistant reply
+    await add_message(session, role="assistant", content=reply_text, content_type="text")
 
-    # 7. Save the proactive question to the DB
+    # 8. Persist the proactive question
     if proactive_question:
         await add_pending_question(session, proactive_question)
 
@@ -148,7 +212,7 @@ async def chat(
 
 
 async def _generate_proactive_question(
-    context_messages: List[dict],
+    context_messages: List[Dict[str, Any]],
     knowledge_items: List,
 ) -> Optional[str]:
     """Ask GPT-4o to generate a curious question the AI child has about the world."""
@@ -178,8 +242,7 @@ async def incorporate_teaching(
 ) -> str:
     """
     Process explicit teaching from the user and return a confirmation reply.
-    The knowledge is already saved by the API layer; this method generates the
-    acknowledgement response.
+    The knowledge is already saved by the API layer; this generates the reply.
     """
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -200,7 +263,6 @@ async def incorporate_teaching(
     )
     reply = response.choices[0].message.content or "Thank you, I have learned it!"
 
-    # Record this exchange in conversation history
     await add_message(
         session,
         role="user",
@@ -209,3 +271,4 @@ async def incorporate_teaching(
     )
     await add_message(session, role="assistant", content=reply)
     return reply
+

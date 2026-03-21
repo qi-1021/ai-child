@@ -60,6 +60,18 @@ class KnowledgeOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ToolOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    code: str
+    parameters_schema: Dict[str, Any]
+    call_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── Questions ─────────────────────────────────────────────────────────────────
 
 class QuestionOut(BaseModel):

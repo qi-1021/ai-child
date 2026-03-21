@@ -10,10 +10,9 @@ from sqlalchemy import (
     Text,
     JSON,
     Boolean,
-    ForeignKey,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import settings
 
@@ -67,6 +66,21 @@ class PendingQuestion(Base):
     answer = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     answered_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class Tool(Base):
+    """A reusable Python tool created by the AI child."""
+
+    __tablename__ = "tools"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=False)
+    code = Column(Text, nullable=False)
+    # OpenAI-style JSON schema describing the tool's parameters
+    parameters_schema = Column(JSON, nullable=False, default=dict)
+    call_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 async def init_db():

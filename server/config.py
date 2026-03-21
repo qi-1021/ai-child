@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # ── Autonomous research ────────────────────────────────────────────────
+    # Enable web search after answering a proactive question
+    research_enabled: bool = True
+
+    # Number of search queries generated per research session
+    research_query_count: int = 2
+
+    # DuckDuckGo results fetched per query
+    research_max_results: int = 3
+
+    # ── Code sandbox ───────────────────────────────────────────────────────
+    # Seconds before a sandboxed subprocess is killed
+    code_exec_timeout: int = 10
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

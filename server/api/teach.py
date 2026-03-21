@@ -14,6 +14,7 @@ from ai.memory import (
     get_all_knowledge,
     get_unanswered_questions,
 )
+from ai.profile import NAME_QUESTION_TOPIC, extract_name_from_answer, set_ai_name
 from ai.researcher import research_topic
 from ai.tools import get_all_tools, get_tool
 from models import get_session
@@ -25,14 +26,19 @@ router = APIRouter(prefix="/teach", tags=["teach"])
 @router.post("/", response_model=dict)
 async def teach(
     body: TeachIn,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ):
     """
     Explicitly teach the AI child a new piece of knowledge.
-    The AI child stores the knowledge and replies with an acknowledgement.
+
+    After acknowledging the lesson, the AI autonomously searches the web for
+    more information on the topic (background task — does not delay the reply).
     """
     await add_knowledge(session, topic=body.topic, content=body.content)
     reply = await incorporate_teaching(session, body.topic, body.content)
+    # Autonomous follow-up research
+    background_tasks.add_task(research_topic, body.topic, body.content)
     return {"reply": reply}
 
 
@@ -79,14 +85,30 @@ async def answer(
     """
     Answer a question the AI child has asked.
 
-    After storing the answer, an autonomous research task is launched in the
-    background: 小智 searches the web to deepen its understanding of the topic
-    and stores the findings as self-sourced knowledge.
+    Special case — naming question (topic "__name__"):
+      The AI extracts its name from the answer and stores it permanently.
+      No research is triggered (naming doesn't need web search).
+
+    All other questions:
+      The answer is stored as user-sourced knowledge, the AI acknowledges it,
+      and an autonomous web-research task is launched in the background.
     """
     q = await answer_question(session, question_id, body.answer)
     if q is None:
         raise HTTPException(status_code=404, detail="Question not found")
 
+    # ── Special: naming question ──────────────────────────────────────────────
+    if q.topic == NAME_QUESTION_TOPIC:
+        name = await extract_name_from_answer(body.answer)
+        await set_ai_name(session, name)
+        reply = (
+            f"太好了！以后我就叫{name}了！"
+            f"谢谢你给我起了这么好听的名字！😊"
+            f"我们继续聊吧，我还有好多想问你的问题！"
+        )
+        return {"reply": reply}
+
+    # ── Normal question ───────────────────────────────────────────────────────
     topic = q.topic or q.question[:64]
 
     # Store the answer as user-sourced knowledge
@@ -95,7 +117,7 @@ async def answer(
     # Acknowledge via conversation
     reply = await incorporate_teaching(session, topic=topic, content=body.answer)
 
-    # Launch autonomous web research in the background (non-blocking)
+    # Launch autonomous web research (non-blocking)
     background_tasks.add_task(research_topic, topic, body.answer)
 
     return {"reply": reply}

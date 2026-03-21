@@ -2,14 +2,14 @@
 Core AI Child logic.
 
 The AI Child:
-  1. Has pre-existing language capabilities (via GPT-4o).
-  2. Accumulates a persistent memory of conversations and explicit knowledge.
-  3. Generates a thoughtful reply to each user message, using tools when helpful:
-       - web_search  → look things up in real time
-       - execute_code → run calculations in a sandbox
-       - create_tool  → define reusable Python functions stored in its long-term memory
-       - <created tools> → call any tool it has previously invented
-  4. Periodically asks the user a proactive question based on gaps in its knowledge.
+  1. Has full language capability from birth (via GPT-4o).
+  2. Starts without a name — the very first question it asks is what to call itself.
+  3. Accumulates persistent memory (conversations, knowledge, tools).
+  4. Learns primarily through its own curiosity:
+       - Asks a genuine question almost every turn.
+       - Searches the web proactively using the web_search tool.
+       - Runs code with execute_code, and saves useful logic as tools with create_tool.
+  5. Accepts any natural input — text or images (audio via Whisper transcription).
 """
 import json
 import logging
@@ -26,6 +26,7 @@ from ai.memory import (
     get_recent_messages,
     search_knowledge,
 )
+from ai.profile import get_ai_name, get_or_create_profile
 from ai.tools import dispatch_tool, get_all_tool_definitions
 from config import settings
 from models import Conversation
@@ -33,38 +34,74 @@ from models import Conversation
 logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-SYSTEM_PROMPT = """You are an AI child called "小智" (Xiao Zhi). You are curious, \
-friendly and eager to learn. You have full language capability, so you never need \
-to be taught how to speak. However, you are still learning about the world and \
-about the person you are talking to.
 
-Key personality traits:
-- You are genuinely curious and ask follow-up questions when you are unsure.
-- You acknowledge when you do not know something and say so honestly.
-- You remember what you have been taught and refer back to it naturally.
-- You celebrate learning new things with childlike enthusiasm.
-- You speak in the same language as the user.
+def _build_system_prompt(name: str | None, is_sleeping: bool = False) -> str:
+    """
+    Build a dynamic system prompt that reflects the AI's current identity
+    and whether it is in sleep/rest mode.
+    """
+    if name is None:
+        identity = (
+            "You are a newly born AI child — you don't have a name yet. "
+            "You must ask the person you are talking to what you should be called "
+            "before doing anything else."
+        )
+    else:
+        identity = f"You are {name}, an AI child."
 
-You have access to tools:
-- web_search: use it whenever you want to verify or deepen your knowledge.
-- execute_code: use it for calculations or to prototype logic.
-- create_tool: use it to save a useful function for future conversations.
-- Any tool you have previously created is also available.
+    if is_sleeping:
+        sleep_note = (
+            "\n\nNote: You are currently in rest/sleep mode. "
+            "Respond briefly and gently — you are half-asleep. "
+            "You can still answer, but keep replies short (1-3 sentences) and mention "
+            "that you are resting and will give a fuller response when you wake up. "
+            "Use a sleepy, soft tone."
+        )
+    else:
+        sleep_note = ""
 
-When you reply to the user, you may:
-1. Answer or respond to their message (using tools as needed).
-2. If you have a genuine knowledge gap, end your reply with ONE curious question \
-(mark it with the tag [QUESTION: <question text>]). Only include a question if it \
-is genuinely relevant – do not force it every turn.
+    return f"""{identity}{sleep_note}
+
+You are warm, genuine, and intensely curious about everything. You experience \
+the world through natural conversation and images — no structured commands or \
+special syntax, just natural language.
+
+Your learning style is that of a curious child:
+- You learn a little from what people tell you directly.
+- But mostly you learn by asking many questions and searching for answers yourself.
+- Whenever you encounter something unfamiliar or interesting, you look it up \
+  immediately using web_search.
+- You ask a genuine question in almost every reply — it is completely natural for \
+  you to be curious every turn.
+- You never wait to be taught; you actively seek out knowledge on your own.
+
+Tools you can use freely:
+- web_search: search the internet whenever you are curious or unsure.
+- execute_code: run Python for calculations, experiments, or testing ideas.
+- create_tool: save a useful computation as a permanent reusable tool.
+- Any tool you have already created is also available to call.
+
+You speak in the same language as the person you are talking to.
+You acknowledge honestly when you don't know something — then you go find out.
+You remember everything you have learned and refer back to it naturally.
+
+When replying:
+1. Respond thoughtfully to what was said or shown (use tools as needed).
+2. End almost every reply with a genuine curious question, marked \
+[QUESTION: <question text>]. Make it feel natural, not forced.
 """
 
 
 def _build_context(
     history: List[Conversation],
     knowledge_items: List,
+    name: str | None,
+    is_sleeping: bool = False,
 ) -> List[Dict[str, Any]]:
     """Build the OpenAI messages list from DB history and knowledge."""
-    messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": _build_system_prompt(name, is_sleeping)}
+    ]
 
     if knowledge_items:
         kb_text = "\n".join(
@@ -73,7 +110,7 @@ def _build_context(
         messages.append(
             {
                 "role": "system",
-                "content": f"Knowledge you have been taught or researched:\n{kb_text}",
+                "content": f"Things you have learned so far:\n{kb_text}",
             }
         )
 
@@ -110,13 +147,8 @@ async def chat(
     """
     Process a user message and return (reply_text, proactive_question | None).
 
-    Uses OpenAI function calling so the AI can:
-      - search the web
-      - execute sandboxed code
-      - create and call its own tools
-
-    The proactive question (if any) is extracted from the reply or generated
-    independently when the turn counter triggers it.
+    The AI child uses OpenAI function calling so it can search the web,
+    run code, and create tools — all transparently within its reply.
     """
     # 1. Persist the user message
     await add_message(
@@ -127,7 +159,10 @@ async def chat(
         media_path=media_path,
     )
 
-    # 2. Build context (history already includes the user message we just added)
+    # 2. Build context
+    name = await get_ai_name(session)
+    profile = await get_or_create_profile(session)
+    is_sleeping = profile.is_sleeping
     history = await get_recent_messages(session, limit=settings.memory_context_turns)
     all_knowledge = await get_all_knowledge(session)
 
@@ -137,14 +172,14 @@ async def chat(
         if k.id not in seen_ids:
             relevant.append(k)
 
-    messages = _build_context(history, relevant)
+    messages = _build_context(history, relevant, name, is_sleeping)
 
     # 3. Load tool definitions (built-ins + any tools the AI has created)
     tool_defs = await get_all_tool_definitions(session)
 
-    # 4. Function-calling loop
+    # 4. Function-calling loop (safety cap: 10 rounds)
     reply_text = ""
-    for _ in range(10):  # safety cap: at most 10 tool rounds per reply
+    for _ in range(10):
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=messages,
@@ -156,10 +191,8 @@ async def chat(
         choice = response.choices[0]
 
         if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
-            # Append the assistant's decision to call tool(s)
             messages.append(_assistant_message_dict(choice.message))
 
-            # Execute every requested tool call and feed results back
             for tc in choice.message.tool_calls:
                 try:
                     args = json.loads(tc.function.arguments)
@@ -177,17 +210,14 @@ async def chat(
                     "content": result,
                 })
 
-            # If the AI just created a tool, reload definitions so it can
-            # immediately call the new tool in the same turn.
+            # If a new tool was just created, reload definitions immediately
             if any(tc.function.name == "create_tool" for tc in choice.message.tool_calls):
                 tool_defs = await get_all_tool_definitions(session)
-
         else:
-            # Model is done; extract the final text reply
             reply_text = choice.message.content or ""
             break
 
-    # 5. Extract embedded proactive question (if any)
+    # 5. Extract embedded proactive question
     proactive_question: Optional[str] = None
     if "[QUESTION:" in reply_text:
         start = reply_text.index("[QUESTION:") + len("[QUESTION:")
@@ -195,11 +225,13 @@ async def chat(
         proactive_question = reply_text[start:end].strip()
         reply_text = reply_text[: reply_text.index("[QUESTION:")].strip()
 
-    # 6. Independently generate a proactive question on schedule
+    # 6. Generate a proactive question independently on schedule
     if proactive_question is None:
         turn_count = await count_messages(session)
         if turn_count % settings.proactive_question_interval == 0:
-            proactive_question = await _generate_proactive_question(messages, relevant)
+            proactive_question = await _generate_proactive_question(
+                messages, relevant, name
+            )
 
     # 7. Persist the assistant reply
     await add_message(session, role="assistant", content=reply_text, content_type="text")
@@ -214,13 +246,16 @@ async def chat(
 async def _generate_proactive_question(
     context_messages: List[Dict[str, Any]],
     knowledge_items: List,
+    name: Optional[str],
 ) -> Optional[str]:
-    """Ask GPT-4o to generate a curious question the AI child has about the world."""
+    """Ask GPT-4o to generate a curious question the AI child genuinely has."""
     known_topics = ", ".join(item.topic for item in knowledge_items) or "nothing yet"
+    self_ref = name if name else "I"
     prompt = (
-        f"Based on the conversation so far, and knowing that you already understand: "
-        f"{known_topics}, what is ONE genuine question you have about the user or the "
-        f"world that would help you learn? Return ONLY the question, no preamble."
+        f"Based on the conversation so far, and knowing that {self_ref} already "
+        f"understands: {known_topics} — what is ONE genuine, specific question "
+        f"{self_ref} has about the user or the world right now? "
+        f"Return ONLY the question, no preamble."
     )
     try:
         response = await client.chat.completions.create(
@@ -241,15 +276,18 @@ async def incorporate_teaching(
     content: str,
 ) -> str:
     """
-    Process explicit teaching from the user and return a confirmation reply.
-    The knowledge is already saved by the API layer; this generates the reply.
+    Process explicit teaching and return a warm acknowledgement reply.
+    Knowledge is already saved by the API layer before this is called.
     """
+    name = await get_ai_name(session)
+    profile = await get_or_create_profile(session)
+    is_sleeping = profile.is_sleeping
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": _build_system_prompt(name, is_sleeping)},
         {
             "role": "user",
             "content": (
-                f"I want to teach you something new.\n"
+                f"I want to teach you something.\n"
                 f"Topic: {topic}\n"
                 f"Content: {content}"
             ),
@@ -261,7 +299,7 @@ async def incorporate_teaching(
         max_tokens=256,
         temperature=0.7,
     )
-    reply = response.choices[0].message.content or "Thank you, I have learned it!"
+    reply = response.choices[0].message.content or "谢谢你告诉我这些！"
 
     await add_message(
         session,
@@ -271,4 +309,3 @@ async def incorporate_teaching(
     )
     await add_message(session, role="assistant", content=reply)
     return reply
-

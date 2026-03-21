@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     # How many past conversation turns to include as context
     memory_context_turns: int = 20
 
-    # How often (in conversation turns) the AI child proactively asks a question
-    proactive_question_interval: int = 5
+    # How often (in conversation turns) the AI child proactively asks a question.
+    # Set to 2 so the AI asks something almost every other turn — like a curious child.
+    proactive_question_interval: int = 2
 
     # JWT settings for client authentication
     secret_key: str = "CHANGE_THIS_SECRET_IN_PRODUCTION"
@@ -44,14 +45,28 @@ class Settings(BaseSettings):
     research_enabled: bool = True
 
     # Number of search queries generated per research session
-    research_query_count: int = 2
+    research_query_count: int = 3
 
     # DuckDuckGo results fetched per query
-    research_max_results: int = 3
+    research_max_results: int = 4
 
     # ── Code sandbox ───────────────────────────────────────────────────────
     # Seconds before a sandboxed subprocess is killed
     code_exec_timeout: int = 10
+
+
+    # ── Sleep cycle ───────────────────────────────────────────────────────────
+    # Enable/disable the human-like sleep/wake cycle
+    sleep_enabled: bool = True
+
+    # Bedtime hour in 24-h format (local time per ai_timezone)
+    sleep_hour: int = 22   # 10 PM
+
+    # Wake-up hour in 24-h format
+    wake_hour: int = 7     # 7 AM
+
+    # IANA timezone for the sleep schedule
+    ai_timezone: str = "Asia/Shanghai"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

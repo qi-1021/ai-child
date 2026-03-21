@@ -77,13 +77,14 @@ def _verify_secret(provided: Optional[str]) -> None:
 
 # ── SSRF guard ────────────────────────────────────────────────────────────────
 
-def _validate_media_url(url: str) -> tuple[str, str, str]:
+def _validate_media_url(url: str) -> None:
     """
     Validate a user-supplied media URL against SSRF attacks.
 
-    Returns (resolved_ip, hostname, path_with_query) so the caller can
-    construct its own safe request target rather than re-using the raw
-    user-supplied URL.
+    Policy:
+      - HTTPS only
+      - Hostname must resolve to a public (non-private/loopback/reserved) IP
+      - Caller must set follow_redirects=False to prevent redirect-based SSRF
 
     Raises HTTPException (400) on any policy violation.
     """
@@ -114,30 +115,23 @@ def _validate_media_url(url: str) -> tuple[str, str, str]:
             status_code=400,
             detail="Media URL resolves to a private or reserved address.",
         )
-    path_with_query = parsed.path
-    if parsed.query:
-        path_with_query = f"{path_with_query}?{parsed.query}"
-    return resolved_ip, hostname, path_with_query
 
 
 async def _fetch_media(url: str) -> bytes:
     """Download media from a validated external URL.
 
-    The resolved IP address is used as the TCP target and the original
-    hostname is sent as the Host header.  This prevents both SSRF (via
-    private address access) and DNS rebinding (IP is resolved and checked
-    exactly once, before the request is made).
+    SSRF protection layers:
+      1. _validate_media_url pre-resolves the hostname and rejects private IPs.
+      2. follow_redirects=False prevents redirect chains from bypassing the check.
+      3. Standard TLS verification (verify=True) is kept so certificates are
+         validated against the original hostname.
     """
-    resolved_ip, hostname, path = _validate_media_url(url)
-    # Build a safe URL using the pre-validated IP address
-    target_url = f"https://{resolved_ip}{path}"
-    headers = {"Host": hostname}
+    _validate_media_url(url)
     async with httpx.AsyncClient(
         timeout=15,
-        follow_redirects=False,
-        verify=False,  # cert validation uses resolved_ip; hostname is in Host header
+        follow_redirects=False,  # prevent redirect-based SSRF bypass
     ) as http:
-        resp = await http.get(target_url, headers=headers)
+        resp = await http.get(url)
         resp.raise_for_status()
         content = resp.content
     if len(content) > _MAX_MEDIA_BYTES:

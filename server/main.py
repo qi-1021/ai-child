@@ -4,19 +4,23 @@ AI Child Server – FastAPI entry point.
 Run with:
     uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 """
+import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai.profile import ensure_name_question_exists, get_ai_name
+from ai.sleep import initialize_sleep_state, sleep_scheduler
 from api.chat import router as chat_router
+from api.sleep import router as sleep_router
 from api.teach import router as teach_router
 from config import settings
-from models import init_db
+from models import async_session, get_session, init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +36,12 @@ MEDIA_DIR.mkdir(exist_ok=True)
 async def lifespan(app: FastAPI):
     logger.info("Initialising database …")
     await init_db()
+    # Ensure the name-seeking question exists on every fresh start
+    async with async_session() as session:
+        await ensure_name_question_exists(session)
+    # Set sleep state based on current time, then start the scheduler
+    await initialize_sleep_state()
+    asyncio.create_task(sleep_scheduler())
     logger.info("AI Child server is ready.")
     yield
     logger.info("AI Child server shutting down.")
@@ -41,9 +51,9 @@ app = FastAPI(
     title="AI Child",
     description=(
         "An autonomous learning AI that grows through conversation, "
-        "remembers what it is taught, and proactively asks questions."
+        "asks questions, searches the web, and creates its own tools."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -60,6 +70,7 @@ app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
 app.include_router(chat_router)
 app.include_router(teach_router)
+app.include_router(sleep_router)
 
 
 @app.get("/", tags=["health"])
@@ -68,12 +79,20 @@ async def root():
         "name": "AI Child",
         "status": "running",
         "docs": "/docs",
+        "version": "0.2.0",
     }
 
 
 @app.get("/health", tags=["health"])
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/profile", tags=["profile"])
+async def get_profile(session: AsyncSession = Depends(get_session)):
+    """Return the AI child's current profile (name, whether it has been named)."""
+    name = await get_ai_name(session)
+    return {"name": name, "has_name": name is not None}
 
 
 if __name__ == "__main__":
@@ -85,3 +104,4 @@ if __name__ == "__main__":
         port=settings.port,
         reload=True,
     )
+

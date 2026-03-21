@@ -166,7 +166,7 @@ async def websocket_endpoint(ws: WebSocket):
     """
     await manager.connect(ws)
     logger.info("WebSocket client connected. Total: %d", len(manager.active))
-    async with get_session().__aiter__().__anext__() if False else _ws_session(ws):
+    async with _ws_session(ws):
         pass
 
 

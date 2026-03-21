@@ -1,7 +1,7 @@
 """
 Database models and session management.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column,
     DateTime,
@@ -23,6 +23,10 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 Base = declarative_base()
 
 
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
 class Conversation(Base):
     """A single conversation turn between user and AI child."""
 
@@ -33,7 +37,7 @@ class Conversation(Base):
     content = Column(Text, nullable=False)
     content_type = Column(String(32), default="text")  # text | image | audio | mixed
     media_path = Column(String(512), nullable=True)  # path to saved media file
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=_utcnow)
     metadata_ = Column("metadata", JSON, default=dict)
 
 
@@ -47,8 +51,8 @@ class KnowledgeItem(Base):
     content = Column(Text, nullable=False)
     source = Column(String(64), default="user")  # "user" | "self"
     confidence = Column(Integer, default=100)  # 0-100
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    last_reviewed = Column(DateTime, nullable=True)
+    timestamp = Column(DateTime(timezone=True), default=_utcnow)
+    last_reviewed = Column(DateTime(timezone=True), nullable=True)
 
 
 class PendingQuestion(Base):
@@ -61,8 +65,8 @@ class PendingQuestion(Base):
     topic = Column(String(256), nullable=True)
     answered = Column(Boolean, default=False)
     answer = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    answered_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    answered_at = Column(DateTime(timezone=True), nullable=True)
 
 
 async def init_db():

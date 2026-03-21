@@ -2,7 +2,7 @@
 Memory management – stores and retrieves conversation history
 and explicit knowledge in the SQLite database.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -123,7 +123,7 @@ async def answer_question(
         return None
     q.answered = True
     q.answer = answer
-    q.answered_at = datetime.utcnow()
+    q.answered_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(q)
     return q

@@ -904,7 +904,7 @@ async function loadFeeds() {
           <div class="feed-url">${escHtml(f.url)}</div>
           <div class="feed-stats">已学 ${f.item_count} 条 · 上次拉取：${polled}</div>
         </div>
-        <button class="btn btn-danger" onclick="deleteFeed(${f.id}, '${escHtml(f.name).replace(/'/g,"\\'")}')">删除</button>
+        <button class="btn btn-danger" data-feed-id="${f.id}" data-feed-name="${escHtml(f.name)}">删除</button>
       `;
       container.appendChild(div);
     });
@@ -912,6 +912,15 @@ async function loadFeeds() {
     container.innerHTML = `<div class='empty'>加载失败：${escHtml(err.message)}</div>`;
   }
 }
+
+// Event delegation for feed delete buttons
+$("feeds-list").addEventListener("click", async e => {
+  const btn = e.target.closest("[data-feed-id]");
+  if (!btn) return;
+  const id = btn.dataset.feedId;
+  const name = btn.dataset.feedName;
+  await deleteFeed(id, name);
+});
 
 async function deleteFeed(id, name) {
   if (!confirm(`确定取消订阅"${name}"吗？已学习的知识会保留。`)) return;

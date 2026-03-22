@@ -140,6 +140,19 @@ class Settings(BaseSettings):
     # "aichild-gen1", "aichild-gen2", …).
     ollama_generation_prefix: str = "aichild"
 
+    # ── Social media / RSS learning ───────────────────────────────────────────
+    # Enable the RSS-based social media learning pipeline.
+    # When enabled, the AI reads subscribed RSS/Atom feeds and learns from them
+    # just like a child reading the news each morning.
+    social_learning_enabled: bool = True
+
+    # How often (in minutes) to poll subscribed RSS feeds for new content.
+    rss_poll_interval_minutes: int = 60
+
+    # Use the LLM to summarise each RSS item into concise knowledge (recommended).
+    # If False, the raw item description is stored directly without summarisation.
+    rss_summarise_enabled: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

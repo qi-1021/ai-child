@@ -161,6 +161,38 @@ class PersonalityMemory(Base):
     context = Column(Text, nullable=True)  # Additional context or explanation
 
 
+class RSSFeed(Base):
+    """
+    An RSS/Atom feed that the AI child subscribes to for continuous learning.
+
+    Items from each feed are fetched on a schedule and ingested as knowledge.
+    """
+
+    __tablename__ = "rss_feeds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(256), nullable=False)
+    url = Column(String(1024), nullable=False, unique=True)
+    active = Column(Boolean, default=True)
+    last_polled_at = Column(DateTime(timezone=True), nullable=True)
+    item_count = Column(Integer, default=0)    # total items ingested so far
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class RSSItem(Base):
+    """
+    Tracks which RSS feed items have already been ingested to prevent duplicates.
+    """
+
+    __tablename__ = "rss_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    feed_id = Column(Integer, nullable=False, index=True)
+    # Canonical unique identifier for the item (link or explicit guid)
+    guid = Column(String(512), nullable=False, index=True)
+    ingested_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
 async def init_db():
     """Create all tables if they do not exist."""
     async with engine.begin() as conn:

@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Child · 智能小孩</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --purple: #7c5cbf;
+      --purple-light: #9b7fd4;
+      --purple-dark: #5a3d9a;
+      --bg: #f4f1fb;
+      --surface: #ffffff;
+      --surface-2: #f9f7fe;
+      --border: #e2d9f3;
+      --text: #2d2040;
+      --text-muted: #7a6d8f;
+      --user-bubble: #7c5cbf;
+      --ai-bubble: #eee9f8;
+      --green: #3dba7b;
+      --red: #e05252;
+      --amber: #e09a2a;
+      --radius: 14px;
+      --shadow: 0 4px 24px rgba(100,70,180,0.12);
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+                   "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ── App shell ────────────────────────────────────────────────────── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 960px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      background: linear-gradient(135deg, var(--purple-dark) 0%, var(--purple-light) 100%);
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      box-shadow: var(--shadow);
+    }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .header-left h1 { font-size: 20px; font-weight: 700; }
+    .header-left .tagline { font-size: 12px; opacity: 0.85; }
+    #ai-name-badge {
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 13px;
+    }
+    #status-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--green);
+      display: inline-block; margin-right: 4px;
+      transition: background .3s;
+    }
+    #status-dot.sleeping { background: var(--amber); }
+    #status-dot.offline  { background: var(--red); }
+
+    /* ── Tab bar ─────────────────────────────────────────────────────── */
+    nav {
+      background: var(--surface);
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      flex-shrink: 0;
+    }
+    nav button {
+      flex: 1;
+      padding: 12px 6px;
+      border: none;
+      background: none;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: color .2s, border-color .2s;
+    }
+    nav button:hover { color: var(--purple); }
+    nav button.active {
+      color: var(--purple);
+      border-bottom-color: var(--purple);
+    }
+
+    /* ── Panels ──────────────────────────────────────────────────────── */
+    .panels { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+    .panel.active { display: flex; }
+
+    /* ── Chat panel ──────────────────────────────────────────────────── */
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg { display: flex; gap: 8px; }
+    .msg.user { flex-direction: row-reverse; }
+    .bubble {
+      max-width: 75%;
+      padding: 11px 15px;
+      border-radius: 18px;
+      line-height: 1.5;
+      font-size: 14px;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .msg.user .bubble {
+      background: var(--user-bubble);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.ai .bubble {
+      background: var(--ai-bubble);
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+    }
+    .msg.system .bubble {
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 12px;
+      text-align: center;
+      width: 100%;
+      max-width: 100%;
+    }
+    .question-bubble {
+      background: #fff8e6;
+      border: 1px solid #f0c850;
+      color: #7a5800;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; font-size: 18px;
+              display: flex; align-items: center; justify-content: center;
+              background: var(--ai-bubble); flex-shrink: 0; }
+    .typing-dots { display: flex; gap: 5px; padding: 10px 14px; }
+    .typing-dots span {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--purple-light);
+      animation: bounce 1.2s infinite;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: .15s; }
+    .typing-dots span:nth-child(3) { animation-delay: .3s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(0.5); opacity: .5; }
+      40%            { transform: scale(1);   opacity: 1; }
+    }
+
+    #chat-input-row {
+      padding: 12px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+    #chat-input {
+      flex: 1;
+      padding: 11px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 22px;
+      font-size: 14px;
+      outline: none;
+      resize: none;
+      line-height: 1.4;
+      max-height: 120px;
+      overflow-y: auto;
+      background: var(--surface-2);
+      color: var(--text);
+      transition: border-color .2s;
+    }
+    #chat-input:focus { border-color: var(--purple); }
+    .btn-send, .btn-img, .btn-audio {
+      width: 42px; height: 42px; border-radius: 50%;
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      transition: opacity .2s, transform .1s;
+      flex-shrink: 0;
+    }
+    .btn-send { background: var(--purple); color: #fff; }
+    .btn-send:hover { opacity: .85; }
+    .btn-send:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-img, .btn-audio { background: var(--bg); color: var(--purple); font-size: 20px; }
+    .btn-img:hover, .btn-audio:hover { background: var(--border); }
+    #file-img, #file-audio { display: none; }
+
+    /* ── Scrollable inner panel (Teach, Knowledge, Social, Status) ─── */
+    .scroll-panel { flex: 1; overflow-y: auto; padding: 20px; }
+
+    /* ── Cards ───────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 6px rgba(100,70,180,0.06);
+    }
+    .card h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; color: var(--purple-dark); }
+
+    /* ── Form helpers ────────────────────────────────────────────────── */
+    label { display: block; font-size: 13px; font-weight: 600;
+            color: var(--text-muted); margin-bottom: 4px; }
+    input[type=text], input[type=url], textarea, select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 9px;
+      font-size: 14px;
+      background: var(--surface-2);
+      color: var(--text);
+      outline: none;
+      transition: border-color .2s;
+      margin-bottom: 10px;
+    }
+    input[type=text]:focus, input[type=url]:focus,
+    textarea:focus, select:focus { border-color: var(--purple); }
+    textarea { resize: vertical; min-height: 80px; }
+
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 9px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: var(--purple); color: #fff; }
+    .btn-danger  { background: var(--red);    color: #fff; padding: 6px 14px; font-size: 12px; }
+    .btn-secondary { background: var(--bg); color: var(--purple);
+                     border: 1.5px solid var(--border); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ── Question list ───────────────────────────────────────────────── */
+    .q-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--amber);
+      border-radius: 9px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .q-text { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .q-topic { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+    .q-answer-row { display: flex; gap: 8px; align-items: center; }
+    .q-answer-row input { margin: 0; flex: 1; }
+
+    /* ── Knowledge items ─────────────────────────────────────────────── */
+    #knowledge-search {
+      margin-bottom: 14px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 22px;
+      padding: 10px 16px;
+    }
+    .k-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+    .k-topic { font-size: 12px; font-weight: 700; color: var(--purple-dark); margin-bottom: 4px; }
+    .k-content { font-size: 13px; line-height: 1.5; }
+    .k-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-user   { background: #e8f4ff; color: #2070c0; }
+    .badge-self   { background: #f0ffe8; color: #2c7a2c; }
+    .badge-social { background: #fff0f8; color: #a02080; }
+    .badge-consolidation { background: #f5f0ff; color: #6040a0; }
+    .badge-conf   { background: var(--bg); color: var(--text-muted); }
+
+    /* ── RSS feeds ───────────────────────────────────────────────────── */
+    .feed-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 11px 14px;
+      margin-bottom: 8px;
+    }
+    .feed-icon { font-size: 20px; flex-shrink: 0; }
+    .feed-info { flex: 1; min-width: 0; }
+    .feed-name { font-size: 14px; font-weight: 700; }
+    .feed-url  { font-size: 11px; color: var(--text-muted); word-break: break-all; }
+    .feed-stats { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ── Status panel ────────────────────────────────────────────────── */
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat-box {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-val { font-size: 28px; font-weight: 800; color: var(--purple); }
+    .stat-lbl { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    /* ── Toast notification ──────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: rgba(44,32,64,0.92);
+      color: #fff;
+      padding: 10px 22px;
+      border-radius: 22px;
+      font-size: 13px;
+      font-weight: 600;
+      pointer-events: none;
+      transition: transform .3s ease;
+      z-index: 999;
+      white-space: nowrap;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      nav button { font-size: 11px; padding: 10px 2px; }
+      .bubble { max-width: 88%; }
+      .stat-grid { grid-template-columns: 1fr; }
+    }
+
+    .empty { text-align: center; padding: 40px 0; color: var(--text-muted); font-size: 14px; }
+    .empty .emoji { font-size: 40px; display: block; margin-bottom: 10px; }
+    hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <header>
+    <div class="header-left">
+      <h1>🧒 AI Child</h1>
+      <span class="tagline">智能小孩 · 持续成长</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="status-dot"></span>
+      <span id="ai-name-badge">加载中…</span>
+    </div>
+  </header>
+
+  <!-- Tab bar -->
+  <nav id="tabs">
+    <button class="active" data-tab="chat">💬 对话</button>
+    <button data-tab="teach">📚 教学</button>
+    <button data-tab="knowledge">🧠 知识</button>
+    <button data-tab="social">📡 社交</button>
+    <button data-tab="status">⚙️ 状态</button>
+  </nav>
+
+  <!-- Panels -->
+  <div class="panels">
+
+    <!-- ── Chat panel ─────────────────────────────────────────────── -->
+    <div class="panel active" id="tab-chat">
+      <div id="chat-messages">
+        <div class="msg system">
+          <div class="bubble">正在连接服务器… 🔄</div>
+        </div>
+      </div>
+      <div id="chat-input-row">
+        <button class="btn-img" title="发送图片" onclick="document.getElementById('file-img').click()">🖼️</button>
+        <input type="file" id="file-img" accept="image/*" />
+        <button class="btn-audio" title="发送音频" onclick="document.getElementById('file-audio').click()">🎙️</button>
+        <input type="file" id="file-audio" accept="audio/*" />
+        <textarea id="chat-input" rows="1" placeholder="和我说说话…" maxlength="4000"></textarea>
+        <button class="btn-send" id="btn-send" title="发送 (Enter)">➤</button>
+      </div>
+    </div>
+
+    <!-- ── Teach panel ────────────────────────────────────────────── -->
+    <div class="panel" id="tab-teach">
+      <div class="scroll-panel">
+
+        <!-- Teach new knowledge -->
+        <div class="card">
+          <h3>📖 教导新知识</h3>
+          <label>主题</label>
+          <input type="text" id="teach-topic" placeholder="例如：太阳系、Python编程、唐诗…" />
+          <label>内容</label>
+          <textarea id="teach-content" placeholder="用简单的语言描述这个主题的知识…" rows="4"></textarea>
+          <button class="btn btn-primary" id="btn-teach">传授给 AI 🎓</button>
+        </div>
+
+        <!-- Pending questions -->
+        <div class="card">
+          <h3>❓ AI 想问你的问题</h3>
+          <div id="questions-list">
+            <div class="empty"><span class="emoji">😊</span>AI 暂时没有问题，稍后再来看看！</div>
+          </div>
+          <button class="btn btn-secondary" id="btn-reload-questions" style="margin-top:8px">刷新问题 🔄</button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Knowledge panel ────────────────────────────────────────── -->
+    <div class="panel" id="tab-knowledge">
+      <div class="scroll-panel">
+        <input type="text" id="knowledge-search" placeholder="🔍  搜索知识库…" />
+        <div id="knowledge-list">
+          <div class="empty"><span class="emoji">🧠</span>知识库为空，去教导 AI 一些知识吧！</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Social / RSS panel ─────────────────────────────────────── -->
+    <div class="panel" id="tab-social">
+      <div class="scroll-panel">
+
+        <div class="card">
+          <h3>📡 订阅 RSS / Atom 信息源</h3>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">
+            让 AI 自动阅读新闻、博客、社交媒体等 RSS 信息源，持续学习新知识。
+            大多数平台（微博、Reddit、YouTube、各大新闻网站）均支持 RSS。
+          </p>
+          <label>信息源名称</label>
+          <input type="text" id="rss-name" placeholder="例如：BBC 新闻 / 科技快讯" />
+          <label>RSS / Atom 地址</label>
+          <input type="url" id="rss-url" placeholder="https://example.com/feed.xml" />
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary" id="btn-add-feed">添加订阅 ➕</button>
+            <button class="btn btn-secondary" id="btn-poll-feeds">立刻拉取 🔄</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>📋 已订阅的信息源</h3>
+          <div id="feeds-list">
+            <div class="empty"><span class="emoji">📭</span>还没有订阅任何信息源</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>🔗 社交媒体 Webhook</h3>
+          <p style="font-size:13px;color:var(--text-muted);">
+            其他平台（Twitter、Discord、微信等）可通过发送 POST 请求到
+            <code style="background:var(--bg);padding:2px 6px;border-radius:5px;">POST /social/webhook</code>
+            将内容推送给 AI 实时学习。<br/>
+            格式：<code>{"source":"twitter","topic":"AI","content":"…","author":"user"}</code>
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Status panel ───────────────────────────────────────────── -->
+    <div class="panel" id="tab-status">
+      <div class="scroll-panel">
+
+        <div class="card">
+          <h3>😴 睡眠状态</h3>
+          <div id="sleep-info" style="font-size:14px;line-height:1.8;"></div>
+        </div>
+
+        <div class="card">
+          <h3>📊 统计数据</h3>
+          <div class="stat-grid" id="stat-grid">
+            <div class="stat-box"><div class="stat-val" id="stat-knowledge">—</div><div class="stat-lbl">知识条目</div></div>
+            <div class="stat-box"><div class="stat-val" id="stat-feeds">—</div><div class="stat-lbl">RSS 订阅</div></div>
+            <div class="stat-box"><div class="stat-val" id="stat-questions">—</div><div class="stat-lbl">待回答问题</div></div>
+            <div class="stat-box"><div class="stat-val" id="stat-model">—</div><div class="stat-lbl">模型版本</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>🔗 API 文档</h3>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">
+            开发者可使用以下接口进行集成开发：
+          </p>
+          <a href="/docs" target="_blank" class="btn btn-secondary" style="display:inline-block;text-decoration:none;">
+            打开 API 文档 📖
+          </a>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- .panels -->
+</div><!-- #app -->
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ── Configuration ────────────────────────────────────────────────────────────
+const BASE = location.origin;
+
+// ── Utility ──────────────────────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+
+let toastTimer;
+function toast(msg, duration = 2800) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), duration);
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body && !(body instanceof FormData)) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  } else if (body) {
+    opts.body = body;
+  }
+  const res = await fetch(BASE + path, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || res.statusText);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ── Tab navigation ────────────────────────────────────────────────────────────
+document.getElementById("tabs").addEventListener("click", e => {
+  if (!e.target.dataset.tab) return;
+  const tab = e.target.dataset.tab;
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+  document.getElementById("tab-" + tab).classList.add("active");
+  e.target.classList.add("active");
+
+  // Lazy-load panel data
+  if (tab === "teach") loadQuestions();
+  if (tab === "knowledge") loadKnowledge();
+  if (tab === "social") loadFeeds();
+  if (tab === "status") loadStatus();
+});
+
+// ── Profile & sleep state ─────────────────────────────────────────────────────
+async function refreshProfile() {
+  try {
+    const profile = await api("GET", "/profile");
+    $("ai-name-badge").textContent = profile.name ? `👶 ${profile.name}` : "👶 未命名";
+  } catch {}
+
+  try {
+    const sleep = await api("GET", "/sleep/state");
+    const dot = $("status-dot");
+    dot.className = sleep.is_sleeping ? "sleeping" : "";
+    dot.title = sleep.is_sleeping ? "正在睡觉 😴" : "醒着 🌞";
+  } catch {}
+}
+
+// ── Chat panel ────────────────────────────────────────────────────────────────
+const chatBox = $("chat-messages");
+const chatInput = $("chat-input");
+const btnSend = $("btn-send");
+let isSending = false;
+
+// Auto-grow textarea
+chatInput.addEventListener("input", () => {
+  chatInput.style.height = "auto";
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px";
+});
+
+chatInput.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendText();
+  }
+});
+btnSend.addEventListener("click", sendText);
+
+function appendMsg(role, html, questionHtml) {
+  // Remove "connecting" placeholder
+  const placeholder = chatBox.querySelector(".msg.system");
+  if (placeholder) placeholder.remove();
+
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (role === "user" ? "user" : role === "system" ? "system" : "ai");
+
+  if (role === "ai") {
+    const av = document.createElement("div");
+    av.className = "avatar";
+    av.textContent = "🧒";
+    wrap.appendChild(av);
+  }
+
+  const bub = document.createElement("div");
+  bub.className = "bubble";
+  bub.innerHTML = html;
+  wrap.appendChild(bub);
+
+  if (questionHtml) {
+    const qb = document.createElement("div");
+    qb.className = "question-bubble";
+    qb.innerHTML = "❓ " + questionHtml;
+    wrap.appendChild(qb);
+  }
+
+  chatBox.appendChild(wrap);
+  chatBox.scrollTop = chatBox.scrollHeight;
+  return wrap;
+}
+
+function showTyping() {
+  const wrap = document.createElement("div");
+  wrap.className = "msg ai";
+  wrap.id = "typing";
+
+  const av = document.createElement("div");
+  av.className = "avatar";
+  av.textContent = "🧒";
+  wrap.appendChild(av);
+
+  const dots = document.createElement("div");
+  dots.className = "typing-dots";
+  dots.innerHTML = "<span></span><span></span><span></span>";
+  wrap.appendChild(dots);
+
+  chatBox.appendChild(wrap);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function removeTyping() {
+  const el = $("typing");
+  if (el) el.remove();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+          .replace(/\n/g,"<br/>");
+}
+
+async function sendText() {
+  const text = chatInput.value.trim();
+  if (!text || isSending) return;
+  chatInput.value = "";
+  chatInput.style.height = "auto";
+  isSending = true;
+  btnSend.disabled = true;
+  appendMsg("user", escHtml(text));
+  showTyping();
+  try {
+    const fd = new FormData();
+    fd.append("text", text);
+    const res = await api("POST", "/chat/text", fd);
+    removeTyping();
+    appendMsg("ai", escHtml(res.reply || "…"), res.proactive_question ? escHtml(res.proactive_question) : null);
+  } catch (err) {
+    removeTyping();
+    appendMsg("ai", "⚠️ 出错了：" + escHtml(err.message));
+  } finally {
+    isSending = false;
+    btnSend.disabled = false;
+    chatInput.focus();
+  }
+}
+
+// Image upload
+$("file-img").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = "";
+  appendMsg("user", `🖼️ <em>${escHtml(file.name)}</em>`);
+  showTyping();
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await api("POST", "/chat/image", fd);
+    removeTyping();
+    appendMsg("ai", escHtml(res.reply || "…"), res.proactive_question ? escHtml(res.proactive_question) : null);
+  } catch (err) {
+    removeTyping();
+    appendMsg("ai", "⚠️ 图片处理失败：" + escHtml(err.message));
+  }
+});
+
+// Audio upload
+$("file-audio").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = "";
+  appendMsg("user", `🎙️ <em>${escHtml(file.name)}</em>`);
+  showTyping();
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await api("POST", "/chat/audio", fd);
+    removeTyping();
+    appendMsg("ai",
+      (res.transcription ? `🗣️ <em>${escHtml(res.transcription)}</em><br/>` : "") + escHtml(res.reply || "…"),
+      res.proactive_question ? escHtml(res.proactive_question) : null
+    );
+  } catch (err) {
+    removeTyping();
+    appendMsg("ai", "⚠️ 音频处理失败：" + escHtml(err.message));
+  }
+});
+
+// ── Teach panel ───────────────────────────────────────────────────────────────
+$("btn-teach").addEventListener("click", async () => {
+  const topic = $("teach-topic").value.trim();
+  const content = $("teach-content").value.trim();
+  if (!topic || !content) { toast("⚠️ 主题和内容不能为空"); return; }
+  $("btn-teach").disabled = true;
+  try {
+    const res = await api("POST", "/teach/", { topic, content });
+    $("teach-topic").value = "";
+    $("teach-content").value = "";
+    toast("✅ 知识已传授！AI 正在学习…");
+    // Switch to chat to see AI's acknowledgement
+    appendMsg("ai", escHtml(res.reply || "谢谢你教我！"));
+    document.querySelector(`[data-tab="chat"]`).click();
+  } catch (err) {
+    toast("❌ 传授失败：" + err.message);
+  } finally {
+    $("btn-teach").disabled = false;
+  }
+});
+
+$("btn-reload-questions").addEventListener("click", loadQuestions);
+
+async function loadQuestions() {
+  const container = $("questions-list");
+  container.innerHTML = "<div class='empty'>加载中…</div>";
+  try {
+    const qs = await api("GET", "/teach/questions");
+    if (!qs.length) {
+      container.innerHTML = "<div class='empty'><span class='emoji'>😊</span>AI 暂时没有问题！</div>";
+      return;
+    }
+    container.innerHTML = "";
+    qs.forEach(q => {
+      const div = document.createElement("div");
+      div.className = "q-item";
+      div.innerHTML = `
+        <div class="q-text">${escHtml(q.question)}</div>
+        <div class="q-topic">${q.topic ? "主题：" + escHtml(q.topic) : ""}</div>
+        <div class="q-answer-row">
+          <input type="text" placeholder="输入你的回答…" id="q-ans-${q.id}" />
+          <button class="btn btn-primary" style="white-space:nowrap" onclick="answerQuestion(${q.id})">回答 ✓</button>
+        </div>
+      `;
+      container.appendChild(div);
+    });
+  } catch (err) {
+    container.innerHTML = `<div class='empty'>加载失败：${escHtml(err.message)}</div>`;
+  }
+}
+
+async function answerQuestion(id) {
+  const input = $(`q-ans-${id}`);
+  const answer = input.value.trim();
+  if (!answer) { toast("⚠️ 回答不能为空"); return; }
+  try {
+    const res = await api("POST", `/teach/questions/${id}/answer`, { answer });
+    toast("✅ 回答已提交！");
+    loadQuestions();
+    appendMsg("ai", escHtml(res.reply || "谢谢！"));
+    document.querySelector(`[data-tab="chat"]`).click();
+    refreshProfile(); // name might have been set
+  } catch (err) {
+    toast("❌ 提交失败：" + err.message);
+  }
+}
+
+// ── Knowledge panel ───────────────────────────────────────────────────────────
+let allKnowledge = [];
+
+async function loadKnowledge() {
+  const container = $("knowledge-list");
+  container.innerHTML = "<div class='empty'>加载中…</div>";
+  try {
+    allKnowledge = await api("GET", "/teach/knowledge");
+    renderKnowledge();
+  } catch (err) {
+    container.innerHTML = `<div class='empty'>加载失败：${escHtml(err.message)}</div>`;
+  }
+}
+
+function renderKnowledge() {
+  const q = $("knowledge-search").value.toLowerCase();
+  const items = q
+    ? allKnowledge.filter(k => k.topic.toLowerCase().includes(q) || k.content.toLowerCase().includes(q))
+    : allKnowledge;
+  const container = $("knowledge-list");
+  if (!items.length) {
+    container.innerHTML = "<div class='empty'><span class='emoji'>🧠</span>没有匹配的知识条目</div>";
+    return;
+  }
+  container.innerHTML = "";
+  items.slice(0, 200).forEach(k => {
+    const div = document.createElement("div");
+    div.className = "k-item";
+    const sourceBadge = k.source === "user" ? "badge-user" :
+                        k.source === "self" ? "badge-self" :
+                        k.source === "social" ? "badge-social" : "badge-consolidation";
+    const sourceLabel = k.source === "user" ? "用户教导" :
+                        k.source === "self" ? "自我推断" :
+                        k.source === "social" ? "社交媒体" : "睡眠整理";
+    div.innerHTML = `
+      <div class="k-topic">${escHtml(k.topic)}</div>
+      <div class="k-content">${escHtml(k.content.slice(0,300))}${k.content.length>300?"…":""}</div>
+      <div class="k-meta">
+        <span class="badge ${sourceBadge}">${sourceLabel}</span>
+        <span class="badge badge-conf">置信度 ${k.confidence}%</span>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+  if (items.length > 200) {
+    const note = document.createElement("div");
+    note.className = "empty";
+    note.textContent = `仅显示前 200 条，共 ${items.length} 条`;
+    container.appendChild(note);
+  }
+}
+
+$("knowledge-search").addEventListener("input", renderKnowledge);
+
+// ── Social / RSS panel ────────────────────────────────────────────────────────
+$("btn-add-feed").addEventListener("click", async () => {
+  const name = $("rss-name").value.trim();
+  const url  = $("rss-url").value.trim();
+  if (!name || !url) { toast("⚠️ 请填写名称和地址"); return; }
+  $("btn-add-feed").disabled = true;
+  try {
+    await api("POST", "/social/rss", { name, url });
+    $("rss-name").value = "";
+    $("rss-url").value = "";
+    toast("✅ 订阅成功！AI 正在读取内容…");
+    loadFeeds();
+  } catch (err) {
+    toast("❌ 订阅失败：" + err.message);
+  } finally {
+    $("btn-add-feed").disabled = false;
+  }
+});
+
+$("btn-poll-feeds").addEventListener("click", async () => {
+  $("btn-poll-feeds").disabled = true;
+  try {
+    await api("POST", "/social/rss/poll");
+    toast("🔄 拉取任务已启动，稍后刷新查看新知识");
+    setTimeout(loadFeeds, 3000);
+  } catch (err) {
+    toast("❌ 拉取失败：" + err.message);
+  } finally {
+    $("btn-poll-feeds").disabled = false;
+  }
+});
+
+async function loadFeeds() {
+  const container = $("feeds-list");
+  container.innerHTML = "<div class='empty'>加载中…</div>";
+  try {
+    const feeds = await api("GET", "/social/rss");
+    if (!feeds.length) {
+      container.innerHTML = "<div class='empty'><span class='emoji'>📭</span>还没有订阅任何信息源</div>";
+      return;
+    }
+    container.innerHTML = "";
+    feeds.forEach(f => {
+      const div = document.createElement("div");
+      div.className = "feed-item";
+      const polled = f.last_polled_at ? new Date(f.last_polled_at).toLocaleString("zh-CN") : "未拉取";
+      div.innerHTML = `
+        <div class="feed-icon">📰</div>
+        <div class="feed-info">
+          <div class="feed-name">${escHtml(f.name)}</div>
+          <div class="feed-url">${escHtml(f.url)}</div>
+          <div class="feed-stats">已学 ${f.item_count} 条 · 上次拉取：${polled}</div>
+        </div>
+        <button class="btn btn-danger" onclick="deleteFeed(${f.id}, '${escHtml(f.name).replace(/'/g,"\\'")}')">删除</button>
+      `;
+      container.appendChild(div);
+    });
+  } catch (err) {
+    container.innerHTML = `<div class='empty'>加载失败：${escHtml(err.message)}</div>`;
+  }
+}
+
+async function deleteFeed(id, name) {
+  if (!confirm(`确定取消订阅"${name}"吗？已学习的知识会保留。`)) return;
+  try {
+    await api("DELETE", `/social/rss/${id}`);
+    toast("🗑️ 已取消订阅");
+    loadFeeds();
+  } catch (err) {
+    toast("❌ 删除失败：" + err.message);
+  }
+}
+
+// ── Status panel ──────────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const sleep = await api("GET", "/sleep/state");
+    $("sleep-info").innerHTML = `
+      <b>当前状态：</b>${sleep.is_sleeping ? "💤 睡觉中" : "🌞 清醒"}<br/>
+      <b>入睡时间：</b>${sleep.sleep_hour}:00<br/>
+      <b>起床时间：</b>${sleep.wake_hour}:00<br/>
+      <b>时区：</b>${sleep.timezone}
+    `;
+  } catch {}
+
+  try {
+    const [knowledge, feeds, questions, profile] = await Promise.all([
+      api("GET", "/teach/knowledge"),
+      api("GET", "/social/rss"),
+      api("GET", "/teach/questions"),
+      api("GET", "/profile"),
+    ]);
+    $("stat-knowledge").textContent = knowledge.length;
+    $("stat-feeds").textContent = feeds.length;
+    $("stat-questions").textContent = questions.length;
+    $("stat-model").textContent = profile.name ? profile.name : "未命名";
+  } catch {}
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+(async () => {
+  await refreshProfile();
+
+  // Show connection status in chat
+  try {
+    const h = await api("GET", "/health");
+    chatBox.innerHTML = "";
+    appendMsg("ai", "👋 你好！我已经准备好了，快来和我聊天吧～");
+    chatInput.focus();
+  } catch {
+    chatBox.innerHTML = "";
+    appendMsg("ai", "⚠️ 无法连接服务器。请确认服务器已在 " + BASE + " 上运行。");
+    $("status-dot").className = "offline";
+  }
+
+  // Poll sleep state every 2 minutes
+  setInterval(refreshProfile, 120_000);
+})();
+</script>
+</body>
+</html>

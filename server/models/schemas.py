@@ -88,6 +88,34 @@ class AnswerIn(BaseModel):
     answer: str
 
 
+# ── RSS / Social media ────────────────────────────────────────────────────────
+
+class RSSFeedIn(BaseModel):
+    name: str
+    url: str
+
+
+class RSSFeedOut(BaseModel):
+    id: int
+    name: str
+    url: str
+    active: bool
+    last_polled_at: Optional[datetime]
+    item_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SocialWebhookIn(BaseModel):
+    """Generic social media post received via webhook."""
+    source: str              # e.g. "twitter", "weibo", "discord"
+    topic: Optional[str] = None
+    content: str             # the text content of the post
+    author: Optional[str] = None
+    url: Optional[str] = None
+
+
 # ── WebSocket events ──────────────────────────────────────────────────────────
 
 class WSEvent(BaseModel):

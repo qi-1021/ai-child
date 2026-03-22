@@ -58,9 +58,15 @@ async def client(app):
 async def test_root(client):
     response = await client.get("/")
     assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "AI Child"
-    assert data["status"] == "running"
+    # Root now serves the UI HTML file when it exists, or a JSON health response
+    # when the UI directory is absent (as in test environments).
+    ct = response.headers.get("content-type", "")
+    if "text/html" in ct:
+        assert b"AI Child" in response.content
+    else:
+        data = response.json()
+        assert data["name"] == "AI Child"
+        assert data["status"] == "running"
 
 
 @pytest.mark.asyncio

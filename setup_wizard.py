@@ -51,12 +51,14 @@ def print_error(text: str) -> None:
     print(f"{Colors.RED}❌ {text}{Colors.RESET}")
 
 
-def prompt_choice(prompt: str, choices: list[str], default: int = 0) -> int:
+def prompt_choice(prompt: str, choices: list[str], default: int = 0, descriptions: list[str] = None) -> int:
     """Prompt user to choose from a list"""
     print(f"\n{Colors.BOLD}{prompt}{Colors.RESET}")
     for i, choice in enumerate(choices, 1):
         marker = f"{Colors.GREEN}→{Colors.RESET}" if i - 1 == default else " "
         print(f"  {marker} {i}. {choice}")
+        if descriptions and i - 1 < len(descriptions):
+            print(f"     {Colors.YELLOW}{descriptions[i-1]}{Colors.RESET}")
 
     while True:
         try:
@@ -71,9 +73,12 @@ def prompt_choice(prompt: str, choices: list[str], default: int = 0) -> int:
             print_error("Please enter a number.")
 
 
-def prompt_text(prompt: str, default: str = "", required: bool = False) -> str:
+def prompt_text(prompt: str, default: str = "", required: bool = False, help_text: str = "") -> str:
     """Prompt user for text input"""
     while True:
+        if help_text:
+            print(f"{Colors.YELLOW}(💡 Tip: {help_text}){Colors.RESET}")
+
         default_str = f" [{default}]" if default else ""
         user_input = input(f"{Colors.BOLD}{prompt}{default_str}: {Colors.RESET}").strip()
 
@@ -110,6 +115,81 @@ def check_ollama() -> bool:
         return False
 
 
+def setup_ollama_models() -> None:
+    """Helper to register local GGUF models with Ollama"""
+    print_step(1, "Checking for local GGUF models...")
+
+    models_dir = Path.home().parent / "mac第二磁盘" / "ollama" / "models"
+    if not models_dir.exists():
+        return
+
+    # Find all GGUF files
+    gguf_files = list(models_dir.rglob("*.gguf"))
+    if not gguf_files:
+        return
+
+    print(f"✅ Found {len(gguf_files)} local GGUF models:")
+    for gguf in gguf_files:
+        print(f"   • {gguf.parent.name} ({gguf.stat().st_size / (1024**3):.1f} GB)")
+
+    register = prompt_choice(
+        "\nWould you like to register these models with Ollama?",
+        ["Yes, register them", "No, I'll do it manually"],
+        default=0
+    )
+
+    if register == 0:
+        print_step(2, "Registering models...")
+
+        # Create Modelfiles for each local model
+        modelfiles = {
+            "Qwen3.5-9B-GGUF": {
+                "model": "Qwen3.5-9B-GGUF/qwen3.5-9b-gguf.gguf",
+                "name": "qwen-local"
+            },
+            "gemma-3-12b-it-abliterated-GGUF": {
+                "model": "gemma-3-12b-it-abliterated-GGUF/gemma-3-12b-it-abliterated.q3_k_m.gguf",
+                "name": "gemma-local"
+            },
+            "Huihui-Qwen3-VL-8B": {
+                "model": "Huihui-Qwen3-VL-8B/ggml-model-Q4_K_M.gguf",
+                "name": "huihui-qwen-local"
+            }
+        }
+
+        for model_dir, model_info in modelfiles.items():
+            model_path = models_dir / model_info["model"]
+            if not model_path.exists():
+                continue
+
+            # Create Modelfile
+            modelfile_content = f"""FROM {model_path}
+TEMPLATE "[INST] {{{{ .Prompt }}}} [/INST]"
+SYSTEM You are a helpful AI assistant.
+"""
+
+            modelfile_path = Path(f"/tmp/Modelfile-{model_info['name']}")
+            modelfile_path.write_text(modelfile_content)
+
+            # Register with ollama create
+            print(f"  📝 Creating {model_info['name']}...", end=" ")
+            try:
+                result = subprocess.run(
+                    ["ollama", "create", model_info["name"], "-f", str(modelfile_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    print_success("Done")
+                else:
+                    print_warning(f"(already exists or skipped)")
+            except Exception as e:
+                print_warning(f"(error: {str(e)[:30]})")
+
+            modelfile_path.unlink(missing_ok=True)
+
+
 def setup_llm_provider() -> Dict[str, Any]:
     """Setup LLM provider configuration"""
     print_header("🤖 LLM Provider Setup")
@@ -123,7 +203,12 @@ def setup_llm_provider() -> Dict[str, Any]:
     choice_idx = prompt_choice(
         "Which LLM provider would you like to use?",
         choices,
-        default=0
+        default=0,
+        descriptions=[
+            "Your own models, no API key needed, fast startup",
+            "Use powerful cloud models, requires API key",
+            "Use Alibaba Qwen models, requires API key"
+        ]
     )
 
     config = {}
@@ -162,14 +247,27 @@ def setup_llm_provider() -> Dict[str, Any]:
 
         print_success("Connected to Ollama.")
 
+        # Try to register local models
+        try:
+            setup_ollama_models()
+        except Exception as e:
+            print_warning(f"Could not register local models: {e}")
+
+        print()
+
         # List available models
         try:
             result = subprocess.run(
                 ["ollama", "list"],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=5
             )
-            print(f"\n📚 Available models:\n{result.stdout}")
+            if result.stdout.strip():
+                print(f"📚 Available Ollama models:\n")
+                for line in result.stdout.strip().split('\n'):
+                    print(f"   {line}")
+                print()
         except Exception:
             pass
 
@@ -227,6 +325,10 @@ def setup_bot_adapters() -> Dict[str, Any]:
     """Setup bot adapters (Telegram, QQ, etc.)"""
     print_header("🤖 Bot Adapters Setup")
 
+    print(f"""{Colors.BOLD}Bot adapters let you chat with AI on different platforms.{Colors.RESET}
+You can enable none, one, or multiple adapters.
+""")
+
     config = {
         "SERVER_URL": "http://localhost:8000"
     }
@@ -234,42 +336,69 @@ def setup_bot_adapters() -> Dict[str, Any]:
     # Telegram
     enable_telegram = prompt_choice(
         "Enable Telegram bot?",
-        ["Yes", "No"],
-        default=1
+        ["Yes, enable Telegram", "No, skip Telegram"],
+        default=1,
+        descriptions=[
+            "Chat with AI in Telegram, requires bot token from @BotFather",
+            ""
+        ]
     )
 
     if enable_telegram == 0:
-        print(f"\n📱 To set up Telegram:")
-        print(f"   1. Talk to @BotFather on Telegram")
-        print(f"   2. Create a new bot and get the token")
-        token = prompt_text("Enter your Telegram bot token")
+        print(f"\n{Colors.BOLD}📱 Setting up Telegram bot:{Colors.RESET}")
+        print(f"""
+  1. Open Telegram and find @BotFather
+  2. Send: /newbot
+  3. Follow the prompts to create your bot
+  4. Copy the token from the response
+  5. Paste it below
+""")
+        token = prompt_text(
+            "Enter your Telegram bot token",
+            help_text="Looks like: 123456:ABC-DEF1234..."
+        )
         if token:
             config["TELEGRAM_TOKEN"] = token
+            print_success("Telegram configured")
 
     # QQ
     enable_qq = prompt_choice(
         "Enable QQ bot?",
-        ["Yes", "No"],
-        default=0
+        ["Yes, enable QQ", "No, skip QQ"],
+        default=0,
+        descriptions=[
+            "Chat with AI in QQ groups/private chats, requires go-cqhttp",
+            ""
+        ]
     )
 
     if enable_qq == 0:
-        print(f"\n🎮 To set up QQ bot:")
-        print(f"   1. Install go-cqhttp: https://github.com/Mrs4s/go-cqhttp")
-        print(f"   2. Start go-cqhttp on port 5700")
-        print(f"   3. Configure HTTP API in go-cqhttp config")
+        print(f"\n{Colors.BOLD}🎮 Setting up QQ bot:{Colors.RESET}")
+        print(f"""
+  1. Download go-cqhttp from: https://github.com/Mrs4s/go-cqhttp/releases
+  2. Run go-cqhttp and complete the setup
+  3. Edit config.yml to enable HTTP API (usually port 5700)
+  4. Start go-cqhttp before running AI Child bot
+""")
 
         qq_url = prompt_text(
-            "QQ API URL (default: http://localhost:5700)",
-            default="http://localhost:5700"
+            "QQ API URL",
+            default="http://localhost:5700",
+            help_text="go-cqhttp HTTP API, usually on port 5700"
         )
         config["QQ_API_URL"] = qq_url
 
         qq_token = prompt_text(
-            "QQ API token (optional, leave blank if not needed)"
+            "QQ API token (optional, leave blank if not set in go-cqhttp)"
         )
         if qq_token:
             config["QQ_API_TOKEN"] = qq_token
+
+        if qq_url:
+            print_success("QQ configured")
+
+    if not config.get("TELEGRAM_TOKEN") and not config.get("QQ_API_URL"):
+        print_warning("No bot adapters enabled. You can still use the web UI to chat.")
 
     return config
 
@@ -277,6 +406,10 @@ def setup_bot_adapters() -> Dict[str, Any]:
 def setup_server_settings() -> Dict[str, Any]:
     """Setup general server settings"""
     print_header("⚙️  Server Settings")
+
+    print(f"""{Colors.BOLD}These settings control how the AI Child server runs.{Colors.RESET}
+Most users can use the defaults.
+""")
 
     config = {
         "HOST": "0.0.0.0",
@@ -288,21 +421,53 @@ def setup_server_settings() -> Dict[str, Any]:
         "AI_TIMEZONE": "Asia/Shanghai"
     }
 
-    # Allow customization of key settings
+    # Customization
     port = prompt_text(
-        "Server port (default: 8000)",
-        default="8000"
+        "Web server port",
+        default="8000",
+        help_text="Where to access the web UI: http://localhost:PORT"
     )
     if port:
         config["PORT"] = port
 
     timezone = prompt_text(
-        "AI timezone (default: Asia/Shanghai)",
-        default="Asia/Shanghai"
+        "AI timezone",
+        default="Asia/Shanghai",
+        help_text="For sleep/wake scheduling. Examples: Asia/Shanghai, US/Eastern, Europe/London"
     )
     if timezone:
         config["AI_TIMEZONE"] = timezone
 
+    # Sleep schedule
+    enable_sleep = prompt_choice(
+        "Enable sleep/wake schedule?",
+        ["Yes, AI sleeps at night", "No, AI is always active"],
+        default=0,
+        descriptions=[
+            "AI will be less active during sleep hours (saves resources)",
+            ""
+        ]
+    )
+
+    if enable_sleep == 1:
+        config["SLEEP_ENABLED"] = "false"
+    else:
+        sleep_hour = prompt_text(
+            "Sleep time (0-23)",
+            default="22",
+            help_text="When AI goes to sleep. 22 = 10 PM"
+        )
+        wake_hour = prompt_text(
+            "Wake time (0-23)",
+            default="7",
+            help_text="When AI wakes up. 7 = 7 AM"
+        )
+        if sleep_hour:
+            config["SLEEP_HOUR"] = sleep_hour
+        if wake_hour:
+            config["WAKE_HOUR"] = wake_hour
+
+    print_success("Server settings configured")
     return config
 
 
@@ -335,25 +500,51 @@ def verify_setup(project_root: Path) -> bool:
         capture_output=True,
         text=True
     )
-    print(python_version.stdout.strip())
+    print(Colors.GREEN + python_version.stdout.strip() + Colors.RESET)
 
     # Check server dependencies
-    print("  • Checking dependencies...", end=" ")
+    print("  • Checking server dependencies...", end=" ", flush=True)
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "list"],
             capture_output=True,
             text=True,
-            cwd=project_root / "server"
+            cwd=project_root / "server",
+            timeout=10
         )
-        if "fastapi" in result.stdout and "SQLAlchemy" in result.stdout:
-            print_success("Found")
-        else:
-            print_warning("Some packages may be missing. Run: pip install -r requirements.txt")
-    except Exception as e:
-        print_warning(f"Could not verify: {e}")
+        missing = []
+        for pkg in ["fastapi", "sqlalchemy", "pydantic"]:
+            if pkg.lower() not in result.stdout.lower():
+                missing.append(pkg)
 
-    print("\n" + Colors.GREEN + "✅ Setup complete!" + Colors.RESET)
+        if not missing:
+            print(Colors.GREEN + "✓" + Colors.RESET)
+        else:
+            print(Colors.YELLOW + f"Missing: {', '.join(missing)}" + Colors.RESET)
+            print(f"     Run: cd {project_root}/server && pip install -r requirements.txt")
+    except Exception as e:
+        print(Colors.YELLOW + f"Could not verify: {str(e)[:40]}" + Colors.RESET)
+
+    # Check bot dependencies
+    print("  • Checking bot dependencies...", end=" ", flush=True)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "list"],
+            capture_output=True,
+            text=True,
+            cwd=project_root / "bot",
+            timeout=10
+        )
+        if "httpx" in result.stdout.lower():
+            print(Colors.GREEN + "✓" + Colors.RESET)
+        else:
+            print(Colors.YELLOW + "Incomplete" + Colors.RESET)
+            print(f"     Run: cd {project_root}/bot && pip install -r requirements.txt")
+    except Exception as e:
+        print(Colors.YELLOW + f"Could not verify: {str(e)[:40]}" + Colors.RESET)
+
+    print()
+    print(Colors.GREEN + "✅ Setup verification complete!" + Colors.RESET)
     return True
 
 
@@ -391,31 +582,44 @@ def main():
         bot_env_path = project_root / "bot" / ".env"
         write_env_file(bot_env_path, bot_config)
 
-        # Step 5: Verify
+        # Step 6: Verify
         verify_setup(project_root)
 
-        # Step 6: Quick start guide
-        print_header("🎯 Quick Start Guide")
+        # Step 7: Quick start guide
+        print_header("🎯 What's Next?")
         print(f"""
-{Colors.BOLD}Terminal 1 - Start Ollama (if using local):${Colors.RESET}
-  ollama serve
+{Colors.BOLD}Your AI Child system is configured! Follow these steps to start:{Colors.RESET}
 
-{Colors.BOLD}Terminal 2 - Start AI Child Server:${Colors.RESET}
-  cd {project_root / 'server'}
-  python3 main.py
+{Colors.BOLD}Step 1: Start Ollama (if using local){Colors.RESET}
+  Open a terminal and run:
+    {Colors.YELLOW}ollama serve{Colors.RESET}
 
-{Colors.BOLD}Terminal 3 - Start Bot(s):${Colors.RESET}
-  cd {project_root / 'bot'}
-  python3 main.py  # Start all adapters
-  # or
-  python3 main.py qq  # Start only QQ bot
-  python3 main.py telegram  # Start only Telegram
+{Colors.BOLD}Step 2: Start the AI Child server{Colors.RESET}
+  Open another terminal and run:
+    {Colors.YELLOW}cd {project_root}/server{Colors.RESET}
+    {Colors.YELLOW}python3 main.py{Colors.RESET}
+  Wait for: "Uvicorn running on http://0.0.0.0:8000"
 
-{Colors.BOLD}Access the Web UI:${Colors.RESET}
-  http://localhost:8000
+{Colors.BOLD}Step 3: Start the bot(s){Colors.RESET}
+  Open a third terminal and run:
+    {Colors.YELLOW}cd {project_root}/bot{Colors.RESET}
+""")
 
-{Colors.BOLD}API Documentation:${Colors.RESET}
-  http://localhost:8000/docs
+        if bot_config.get("TELEGRAM_TOKEN"):
+            print(f"    {Colors.YELLOW}python3 main.py telegram  # Telegram only{Colors.RESET}")
+        if bot_config.get("QQ_API_URL"):
+            print(f"    {Colors.YELLOW}python3 main.py qq  # QQ only{Colors.RESET}")
+        print(f"    {Colors.YELLOW}python3 main.py  # All adapters{Colors.RESET}")
+
+        print(f"""
+{Colors.BOLD}Then access the UI:{Colors.RESET}
+  Browser: {Colors.BOLD}http://localhost:8000{Colors.RESET}
+  API Docs: {Colors.BOLD}http://localhost:8000/docs{Colors.RESET}
+
+{Colors.BOLD}Configuration files (keep these safe!):{Colors.RESET}
+  - {Colors.YELLOW}{server_env_path}{Colors.RESET}
+  - {Colors.YELLOW}{bot_env_path}{Colors.RESET}
+  (These files are in .gitignore and should NOT be shared)
 """)
 
         # Final message

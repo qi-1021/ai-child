@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.child import incorporate_teaching
+from ai.few_shot import generate_inferences
 from ai.memory import (
     add_knowledge,
     answer_question,
@@ -17,6 +18,8 @@ from ai.memory import (
 from ai.profile import NAME_QUESTION_TOPIC, extract_name_from_answer, set_ai_name
 from ai.researcher import research_topic
 from ai.tools import get_all_tools, get_tool
+from ai.vector_store import store_embedding
+from i18n import t
 from models import get_session
 from models.schemas import AnswerIn, KnowledgeOut, QuestionOut, TeachIn, ToolOut
 
@@ -32,11 +35,17 @@ async def teach(
     """
     Explicitly teach the AI child a new piece of knowledge.
 
-    After acknowledging the lesson, the AI autonomously searches the web for
-    more information on the topic (background task — does not delay the reply).
+    After acknowledging the lesson the AI:
+      • Embeds the knowledge item for semantic memory search (background).
+      • Generates child-like inferences from the one teaching example (background).
+      • Searches the web for more information on the topic (background).
     """
-    await add_knowledge(session, topic=body.topic, content=body.content)
+    item = await add_knowledge(session, topic=body.topic, content=body.content)
     reply = await incorporate_teaching(session, body.topic, body.content)
+    # Embed for semantic search
+    background_tasks.add_task(store_embedding, session, item)
+    # Child-like few-shot inferences
+    background_tasks.add_task(generate_inferences, body.topic, body.content)
     # Autonomous follow-up research
     background_tasks.add_task(research_topic, body.topic, body.content)
     return {"reply": reply}
@@ -101,22 +110,26 @@ async def answer(
     if q.topic == NAME_QUESTION_TOPIC:
         name = await extract_name_from_answer(body.answer)
         await set_ai_name(session, name)
-        reply = (
-            f"太好了！以后我就叫{name}了！"
-            f"谢谢你给我起了这么好听的名字！😊"
-            f"我们继续聊吧，我还有好多想问你的问题！"
-        )
+        # Prefer the user's preferred language for the naming reply
+        from ai.profile import get_or_create_profile
+        profile = await get_or_create_profile(session)
+        lang = getattr(profile, "preferred_language", "zh-CN") or "zh-CN"
+        reply = t("name_accepted", language=lang, ai_name=name)
         return {"reply": reply}
 
     # ── Normal question ───────────────────────────────────────────────────────
     topic = q.topic or q.question[:64]
 
-    # Store the answer as user-sourced knowledge
-    await add_knowledge(session, topic=topic, content=body.answer, source="user")
+    # Store the answer as user-sourced knowledge and embed it
+    item = await add_knowledge(session, topic=topic, content=body.answer, source="user")
 
     # Acknowledge via conversation
     reply = await incorporate_teaching(session, topic=topic, content=body.answer)
 
+    # Embed for semantic search (background)
+    background_tasks.add_task(store_embedding, session, item)
+    # Few-shot self-inferences (background)
+    background_tasks.add_task(generate_inferences, topic, body.answer)
     # Launch autonomous web research (non-blocking)
     background_tasks.add_task(research_topic, topic, body.answer)
 

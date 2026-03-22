@@ -1,6 +1,10 @@
 """
 Memory management – stores and retrieves conversation history
 and explicit knowledge in the SQLite database.
+
+Knowledge retrieval uses a two-tier strategy:
+  1. Semantic search (vector cosine similarity via ai.vector_store) — preferred.
+  2. ILIKE keyword search — fallback when no embeddings are available yet.
 """
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -78,9 +82,28 @@ async def get_all_knowledge(session: AsyncSession) -> List[KnowledgeItem]:
 
 
 async def search_knowledge(
-    session: AsyncSession, query: str
+    session: AsyncSession, query: str, top_k: int = 10
 ) -> List[KnowledgeItem]:
-    """Search for knowledge with relevance filtering."""
+    """
+    Search for knowledge using semantic (vector) similarity first,
+    falling back to ILIKE keyword matching when no embeddings exist yet.
+
+    Always returns plain ``KnowledgeItem`` objects so callers don't need
+    to change their interface.
+    """
+    from ai.vector_store import search_semantic
+    from config import settings
+
+    results = await search_semantic(
+        session,
+        query,
+        top_k=top_k,
+        min_similarity=settings.embedding_min_similarity,
+    )
+    if results:
+        return [item for item, _score in results]
+
+    # Fallback: simple keyword search
     result = await session.execute(
         select(KnowledgeItem).where(
             KnowledgeItem.topic.ilike(f"%{query}%")

@@ -52,6 +52,9 @@ class KnowledgeItem(Base):
     confidence = Column(Integer, default=100)  # 0-100
     timestamp = Column(DateTime(timezone=True), default=_utcnow)
     last_reviewed = Column(DateTime(timezone=True), nullable=True)
+    # Semantic vector stored as a JSON-encoded float array.
+    # Populated asynchronously after creation; None until embedded.
+    embedding = Column(Text, nullable=True, default=None)
 
 
 class PendingQuestion(Base):

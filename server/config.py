@@ -69,6 +69,26 @@ class Settings(BaseSettings):
     # Seconds before a sandboxed subprocess is killed
     code_exec_timeout: int = 10
 
+    # ── Memory / Embedding ─────────────────────────────────────────────────────
+    # OpenAI embedding model for semantic (vector) memory search.
+    # For DashScope set to "text-embedding-v3".
+    embedding_model: str = "text-embedding-3-small"
+
+    # Minimum cosine similarity [0.0–1.0] for a knowledge item to be considered
+    # relevant in semantic search. Lower = more permissive.
+    embedding_min_similarity: float = 0.30
+
+    # ── Few-shot self-teaching ─────────────────────────────────────────────────
+    # Enable the child-like inference engine that generates hypotheses after
+    # every user teaching event (like a child who generalises from a few examples).
+    few_shot_enabled: bool = True
+
+    # How many inferences to generate per teaching event (1–5 recommended).
+    few_shot_inference_count: int = 2
+
+    # Confidence assigned to self-generated inferences (0-100).
+    # Lower than user-sourced facts (100) because they are hypotheses, not facts.
+    few_shot_confidence: int = 50
 
     # ── Sleep cycle ───────────────────────────────────────────────────────────
     # Enable/disable the human-like sleep/wake cycle

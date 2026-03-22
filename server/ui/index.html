@@ -671,6 +671,10 @@ async function sendText() {
   chatInput.style.height = "auto";
   isSending = true;
   btnSend.disabled = true;
+  const originalBtnText = btnSend.textContent;
+  btnSend.textContent = "⏳";
+  btnSend.style.opacity = "0.6";
+  chatInput.disabled = true;
   appendMsg("user", escHtml(text));
   showTyping();
   try {
@@ -685,6 +689,9 @@ async function sendText() {
   } finally {
     isSending = false;
     btnSend.disabled = false;
+    btnSend.textContent = originalBtnText;
+    btnSend.style.opacity = "1";
+    chatInput.disabled = false;
     chatInput.focus();
   }
 }
@@ -692,8 +699,11 @@ async function sendText() {
 // Image upload
 $("file-img").addEventListener("change", async e => {
   const file = e.target.files[0];
-  if (!file) return;
+  if (!file || isSending) return;
   e.target.value = "";
+  isSending = true;
+  btnSend.disabled = true;
+  btnSend.style.opacity = "0.6";
   appendMsg("user", `🖼️ <em>${escHtml(file.name)}</em>`);
   showTyping();
   try {
@@ -705,14 +715,21 @@ $("file-img").addEventListener("change", async e => {
   } catch (err) {
     removeTyping();
     appendMsg("ai", "⚠️ 图片处理失败：" + escHtml(err.message));
+  } finally {
+    isSending = false;
+    btnSend.disabled = false;
+    btnSend.style.opacity = "1";
   }
 });
 
 // Audio upload
 $("file-audio").addEventListener("change", async e => {
   const file = e.target.files[0];
-  if (!file) return;
+  if (!file || isSending) return;
   e.target.value = "";
+  isSending = true;
+  btnSend.disabled = true;
+  btnSend.style.opacity = "0.6";
   appendMsg("user", `🎙️ <em>${escHtml(file.name)}</em>`);
   showTyping();
   try {
@@ -727,6 +744,10 @@ $("file-audio").addEventListener("change", async e => {
   } catch (err) {
     removeTyping();
     appendMsg("ai", "⚠️ 音频处理失败：" + escHtml(err.message));
+  } finally {
+    isSending = false;
+    btnSend.disabled = false;
+    btnSend.style.opacity = "1";
   }
 });
 
@@ -736,6 +757,9 @@ $("btn-teach").addEventListener("click", async () => {
   const content = $("teach-content").value.trim();
   if (!topic || !content) { toast("⚠️ 主题和内容不能为空"); return; }
   $("btn-teach").disabled = true;
+  const originalText = $("btn-teach").textContent;
+  $("btn-teach").textContent = "⏳ 学习中…";
+  $("btn-teach").style.opacity = "0.6";
   try {
     const res = await api("POST", "/teach/", { topic, content });
     $("teach-topic").value = "";
@@ -748,6 +772,8 @@ $("btn-teach").addEventListener("click", async () => {
     toast("❌ 传授失败：" + err.message);
   } finally {
     $("btn-teach").disabled = false;
+    $("btn-teach").textContent = originalText;
+    $("btn-teach").style.opacity = "1";
   }
 });
 
@@ -785,15 +811,29 @@ async function answerQuestion(id) {
   const input = $(`q-ans-${id}`);
   const answer = input.value.trim();
   if (!answer) { toast("⚠️ 回答不能为空"); return; }
+
+  // 找到按钮并禁用
+  const btn = input.nextElementSibling;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ 处理中…";
+  btn.style.opacity = "0.6";
+  input.disabled = true;
+
   try {
     const res = await api("POST", `/teach/questions/${id}/answer`, { answer });
     toast("✅ 回答已提交！");
     loadQuestions();
     appendMsg("ai", escHtml(res.reply || "谢谢！"));
     document.querySelector(`[data-tab="chat"]`).click();
-    refreshProfile(); // name might have been set
+    refreshProfile();
   } catch (err) {
     toast("❌ 提交失败：" + err.message);
+    // 恢复按钮状态
+    btn.disabled = false;
+    btn.textContent = originalText;
+    btn.style.opacity = "1";
+    input.disabled = false;
   }
 }
 

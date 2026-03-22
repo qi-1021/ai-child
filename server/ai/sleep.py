@@ -39,7 +39,7 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai.llm_provider import get_llm_client
+from ai.llm_provider import get_llm_client, get_active_model
 from ai.memory import add_knowledge, add_pending_question
 from ai.profile import get_ai_name, get_or_create_profile
 from config import settings
@@ -103,7 +103,7 @@ async def _generate_sleep_message(session: AsyncSession, name: str | None) -> st
     try:
         client = get_llm_client()
         resp = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_active_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=128,
             temperature=0.8,
@@ -129,7 +129,7 @@ async def _generate_wake_message(
     try:
         client = get_llm_client()
         resp = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_active_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=128,
             temperature=0.8,
@@ -180,7 +180,7 @@ async def consolidate_memories() -> str:
             )
             client = get_llm_client()
             resp = await client.chat.completions.create(
-                model=settings.openai_model,
+                model=get_active_model(),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=512,
                 temperature=0.3,
@@ -261,13 +261,26 @@ async def go_to_sleep() -> None:
 
 
 async def _consolidation_and_store_summary() -> None:
-    """Run consolidation and persist the summary for the morning greeting."""
+    """Run consolidation + dream cycle and persist the summary for the morning greeting."""
     try:
         summary = await consolidate_memories()
         async with async_session() as session:
             profile = await get_or_create_profile(session)
             profile.last_consolidation_summary = summary
             await session.commit()
+
+        # Dream phase: export training data + optionally create a new Ollama generation
+        from ai.dream import run_dream_cycle
+        dream_result = await run_dream_cycle()
+        if dream_result.get("training_data_path"):
+            logger.info(
+                "Dream: training data exported → %s", dream_result["training_data_path"]
+            )
+        if dream_result.get("new_model"):
+            logger.info(
+                "Dream: new Ollama model generation activated → %s",
+                dream_result["new_model"],
+            )
     except Exception as exc:
         logger.exception("Post-sleep consolidation failed: %s", exc)
 

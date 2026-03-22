@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai.llm_provider import get_llm_client
+from ai.llm_provider import get_llm_client, get_active_model
 from config import settings
 from models import AIProfile, PendingQuestion
 
@@ -78,7 +78,7 @@ async def extract_name_from_answer(answer: str) -> str:
     try:
         client = get_llm_client()
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_active_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=32,
             temperature=0.1,

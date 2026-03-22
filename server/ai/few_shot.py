@@ -28,7 +28,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai.llm_provider import get_llm_client
+from ai.llm_provider import get_llm_client, get_active_model
 from ai.memory import add_knowledge
 from ai.vector_store import store_embedding
 from config import settings
@@ -67,7 +67,7 @@ async def generate_inferences(
     try:
         client = get_llm_client()
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_active_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=256,
             temperature=0.7,

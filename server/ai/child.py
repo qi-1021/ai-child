@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai.llm_provider import get_llm_client
+from ai.llm_provider import get_llm_client, get_active_model
 from ai.memory import (
     add_message,
     add_pending_question,
@@ -138,7 +138,7 @@ async def chat(
     reply_text = ""
     for _ in range(10):
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_active_model(),
             messages=messages,
             tools=tool_defs,
             tool_choice="auto",
@@ -217,7 +217,7 @@ async def _generate_proactive_question(
     try:
         client = get_llm_client()
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=get_active_model(),
             messages=context_messages + [{"role": "user", "content": prompt}],
             max_tokens=128,
             temperature=0.9,
@@ -254,7 +254,7 @@ async def incorporate_teaching(
     ]
     client = get_llm_client()
     response = await client.chat.completions.create(
-        model=settings.openai_model,
+        model=get_active_model(),
         messages=messages,
         max_tokens=256,
         temperature=0.7,

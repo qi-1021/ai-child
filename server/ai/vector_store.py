@@ -17,7 +17,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai.llm_provider import get_llm_client
+from ai.llm_provider import get_llm_client, get_embedding_model
 from config import settings
 from models import KnowledgeItem
 
@@ -48,7 +48,7 @@ async def embed_text(text: str) -> Optional[List[float]]:
     try:
         client = get_llm_client()
         response = await client.embeddings.create(
-            model=settings.embedding_model,
+            model=get_embedding_model(),
             input=text[:8000],  # stay within most model context windows
         )
         return response.data[0].embedding

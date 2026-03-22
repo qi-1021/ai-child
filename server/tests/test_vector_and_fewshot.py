@@ -218,6 +218,7 @@ async def test_generate_inferences_stores_items():
 
     with (
         patch("ai.few_shot.get_llm_client", return_value=mock_llm),
+        patch("ai.few_shot.get_active_model", return_value="gpt-4o"),
         patch("ai.few_shot.settings") as mock_settings,
         patch("ai.few_shot.async_session") as mock_session_ctx,
         patch("ai.few_shot.add_knowledge", new=AsyncMock(side_effect=fake_add_knowledge)),
@@ -226,7 +227,6 @@ async def test_generate_inferences_stores_items():
         mock_settings.few_shot_enabled = True
         mock_settings.few_shot_inference_count = 2
         mock_settings.few_shot_confidence = 50
-        mock_settings.openai_model = "gpt-4o"
 
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)

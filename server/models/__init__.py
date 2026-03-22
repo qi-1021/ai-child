@@ -107,6 +107,9 @@ class AIProfile(Base):
     preferred_language = Column(String(16), default="en-US")  # "en-US" | "zh-CN"
     # Personality traits (structured data)
     personality_traits = Column(JSON, default=dict)  # {"interests": [], "values": [], "quirks": []}
+    # Dream-phase model strengthening
+    # Tracks how many Ollama model generations have been created (0 = original base model).
+    model_generation = Column(Integer, default=0)
 
 
 class SleepEvent(Base):

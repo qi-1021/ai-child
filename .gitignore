@@ -14,8 +14,14 @@ parts/
 sdist/
 var/
 wheels/
+# ── Environment & Secrets (NEVER commit!) ──────────────────────────────
 .env
-.venv
+.env.local
+.env.*.local
+.env.prod
+.env.dev
+.secrets/
+secrets.yml
 env/
 venv/
 ENV/
